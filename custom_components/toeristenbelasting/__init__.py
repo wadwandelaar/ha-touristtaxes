@@ -1,0 +1,77 @@
+import logging
+from datetime import datetime, timedelta
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
+from homeassistant.const import STATE_HOME
+
+from .const import DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON, STORAGE_KEY
+
+_LOGGER = logging.getLogger(__name__)
+
+async def async_setup(hass, config):
+    store = Store(hass, 1, STORAGE_KEY)
+
+    # Data laden of nieuw starten
+    data = await store.async_load() or {
+        "total_nights": 0,
+        "total_amount": 0.0
+    }
+
+    async def check_tourist_tax(now):
+        guests = hass.states.get(GUEST_INPUT_ENTITY)
+        guest_count = int(guests.state) if guests else 0
+
+        resident_count = sum(
+            1 for person in RESIDENTS
+            if hass.states.get(person) and hass.states.get(person).state == STATE_HOME
+        )
+
+        total_people = resident_count + guest_count
+        amount = round(total_people * PRICE_PER_PERSON, 2)
+
+        data["total_nights"] += 1
+        data["total_amount"] = round(data["total_amount"] + amount, 2)
+
+        await store.async_save(data)
+
+        hass.states.async_set(
+            f"sensor.{DOMAIN}_vandaag",
+            amount,
+            {
+                "personen": total_people,
+                "prijs_per_persoon": PRICE_PER_PERSON
+            }
+        )
+
+        hass.states.async_set(
+            f"sensor.{DOMAIN}_totaal",
+            data["total_amount"],
+            {
+                "totaal_nachten": data["total_nights"],
+                "prijs_per_persoon": PRICE_PER_PERSON
+            }
+        )
+
+        _LOGGER.info(
+            "Toeristenbelasting berekend: %s personen, €%s",
+            total_people, amount
+        )
+
+    #
+    # TEST INSTELLING — nu + 2 minuten
+    #
+    now = datetime.now()
+    test_time = (now + timedelta(minutes=2)).time()
+    _LOGGER.warning(
+        "TESTMODUS: toeristenbelasting wordt berekend om %02d:%02d",
+        test_time.hour, test_time.minute
+    )
+    async_track_time_change(hass, check_tourist_tax, hour=test_time.hour, minute=test_time.minute)
+
+    #
+    # PRODUCTIE INSTELLING — elke dag om 23:00
+    # (later inschakelen als je klaar bent met testen)
+    #
+    # async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
+
+    return True
