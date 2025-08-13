@@ -1,64 +1,63 @@
+"""Tourist Taxes integration for Home Assistant"""
+from datetime import datetime, timedelta, time
 import logging
-from datetime import datetime, timedelta
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import discovery
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
-from homeassistant.const import STATE_HOME
 
-from .const import (
-    DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON,
-    STORAGE_KEY, CONF_MODE, MODE_TEST
-)
+from .const import DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON, STORAGE_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, entry):
-    mode = entry.data.get(CONF_MODE)
+async def async_setup(hass: HomeAssistant, config: dict):
+    """Set up the integration (legacy setup)."""
+    _LOGGER.info("Tourist Taxes: async_setup called")
+    return True
+
+async def async_setup_entry(hass: HomeAssistant, entry):
+    """Set up the integration from a config entry."""
+    _LOGGER.info("Tourist Taxes: async_setup_entry called")
+
+    hass.data.setdefault(DOMAIN, {})
     store = Store(hass, 1, STORAGE_KEY)
+    hass.data[DOMAIN]['store'] = store
 
-    data = await store.async_load() or {
-        "total_nights": 0,
-        "total_amount": 0.0
-    }
-
-    async def check_tourist_tax(now):
+    async def check_tourist_tax(now_time=None):
+        """Check who is home and calculate tourist tax."""
         guests = hass.states.get(GUEST_INPUT_ENTITY)
-        guest_count = int(guests.state) if guests else 0
+        guests_count = int(guests.state) if guests else 0
 
-        resident_count = sum(
-            1 for person in RESIDENTS
-            if hass.states.get(person) and hass.states.get(person).state == STATE_HOME
+        residents_home = [r for r in RESIDENTS if hass.states.is_state(r, "home")]
+        total_people = len(residents_home) + guests_count
+
+        amount = total_people * PRICE_PER_PERSON
+        _LOGGER.info(
+            "TOURIST TAX CALCULATION: %d residents + %d guests = %d total, amount €%.2f",
+            len(residents_home),
+            guests_count,
+            total_people,
+            amount,
         )
 
-        total_people = resident_count + guest_count
-        amount = round(total_people * PRICE_PER_PERSON, 2)
-
-        data["total_nights"] += 1
-        data["total_amount"] = round(data["total_amount"] + amount, 2)
-
+        # Sla het op in storage
+        data = await store.async_load() or {}
+        today = datetime.now().strftime("%Y-%m-%d")
+        data[today] = {"people": total_people, "amount": amount}
         await store.async_save(data)
 
-        hass.data[DOMAIN] = {
-            "today_people": total_people,
-            "today_amount": amount,
-            "total_nights": data["total_nights"],
-            "total_amount": data["total_amount"]
-        }
-
-        for entity in hass.data.get(f"{DOMAIN}_entities", []):
-            await entity.async_update_ha_state(True)
-
-        _LOGGER.info("Toeristenbelasting: %s pers, €%s", total_people, amount)
-
-    # Tijd instellen op basis van mode
-    if mode == MODE_TEST:
-        now = datetime.now()
+    # Kies modus: test of productie
+    mode = entry.data.get("mode", "prod")
+    now = datetime.now()
+    if mode == "test":
         test_time = (now + timedelta(minutes=2)).time()
-        _LOGGER.warning("TESTMODUS: Berekening om %02d:%02d", test_time.hour, test_time.minute)
-        async_track_time_change(hass, check_tourist_tax,
-                                hour=test_time.hour, minute=test_time.minute)
+        _LOGGER.info("TESTMODUS: Berekening om %s", test_time.strftime("%H:%M"))
+        async_track_time_change(hass, check_tourist_tax, hour=test_time.hour, minute=test_time.minute)
     else:
-        _LOGGER.info("Productiemodus: Berekening dagelijks om 23:00")
         async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
 
-    hass.helpers.discovery.load_platform("sensor", DOMAIN, {}, entry.data)
+    # Sensor platform laden
+    await discovery.async_load_platform(hass, "sensor", DOMAIN, {}, entry.data)
+
     return True
