@@ -8,7 +8,7 @@ from .const import DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON, STOR
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup(hass, config):
+async def async_setup_entry(hass, entry):
     store = Store(hass, 1, STORAGE_KEY)
 
     data = await store.async_load() or {
@@ -40,7 +40,6 @@ async def async_setup(hass, config):
             "total_amount": data["total_amount"]
         }
 
-        # Force sensor update
         for entity in hass.data.get(f"{DOMAIN}_entities", []):
             await entity.async_update_ha_state(True)
 
@@ -55,6 +54,5 @@ async def async_setup(hass, config):
     # PRODUCTIE — elke dag om 23:00
     # async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
 
-    hass.helpers.discovery.load_platform("sensor", DOMAIN, {}, config)
-
+    hass.helpers.discovery.load_platform("sensor", DOMAIN, {}, entry.data)
     return True
