@@ -4,11 +4,15 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.const import STATE_HOME
 
-from .const import DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON, STORAGE_KEY
+from .const import (
+    DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON,
+    STORAGE_KEY, CONF_MODE, MODE_TEST
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry):
+    mode = entry.data.get(CONF_MODE)
     store = Store(hass, 1, STORAGE_KEY)
 
     data = await store.async_load() or {
@@ -45,14 +49,16 @@ async def async_setup_entry(hass, entry):
 
         _LOGGER.info("Toeristenbelasting: %s pers, €%s", total_people, amount)
 
-    # TESTMODUS — nu + 2 minuten
-    now = datetime.now()
-    test_time = (now + timedelta(minutes=2)).time()
-    _LOGGER.warning("TESTMODUS: Berekening om %02d:%02d", test_time.hour, test_time.minute)
-    async_track_time_change(hass, check_tourist_tax, hour=test_time.hour, minute=test_time.minute)
-
-    # PRODUCTIE — elke dag om 23:00
-    # async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
+    # Tijd instellen op basis van mode
+    if mode == MODE_TEST:
+        now = datetime.now()
+        test_time = (now + timedelta(minutes=2)).time()
+        _LOGGER.warning("TESTMODUS: Berekening om %02d:%02d", test_time.hour, test_time.minute)
+        async_track_time_change(hass, check_tourist_tax,
+                                hour=test_time.hour, minute=test_time.minute)
+    else:
+        _LOGGER.info("Productiemodus: Berekening dagelijks om 23:00")
+        async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
 
     hass.helpers.discovery.load_platform("sensor", DOMAIN, {}, entry.data)
     return True
