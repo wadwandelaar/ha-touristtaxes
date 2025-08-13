@@ -1,0 +1,11 @@
+{
+  "domain": "toeristenbelasting",
+  "name": "Toeristenbelasting",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "",
+  "requirements": [],
+  "dependencies": ["person", "zone"],
+  "codeowners": ["@wadwandelaar"],
+  "iot_class": "local_polling"
+}
