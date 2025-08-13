@@ -1,3 +1,4 @@
 DOMAIN = "touristtaxes"
-PRICE_PER_PERSON = 2.40
-RESIDENTS = ["rempt", "caroline"]
+CONF_GUESTS = "guests"
+TOURIST_TAX_PER_PERSON = 2.40
+CONF_MODE = "mode"
