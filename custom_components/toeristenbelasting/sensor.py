@@ -1,49 +1,70 @@
-from homeassistant.helpers.entity import Entity
-from .const import DOMAIN, PRICE_PER_PERSON
+"""Sensor platform for Tourist Taxes integration."""
+from homeassistant.components.sensor import SensorEntity
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from datetime import timedelta
+import logging
 
-async def async_setup_platform(hass, config, add_entities, discovery_info=None):
-    if discovery_info is None:
-        return
+from .const import DOMAIN, STORAGE_KEY, PRICE_PER_PERSON
 
-    sensors = [
-        TouristTaxTodaySensor(hass),
-        TouristTaxTotalSensor(hass)
-    ]
-    hass.data[f"{DOMAIN}_entities"] = sensors
-    add_entities(sensors)
+_LOGGER = logging.getLogger(__name__)
 
-class TouristTaxTodaySensor(Entity):
-    def __init__(self, hass):
-        self.hass = hass
-        self._attr_name = "Toeristenbelasting Vandaag"
-        self._attr_unique_id = "toeristenbelasting_vandaag"
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the tourist taxes sensor platform."""
+    store = hass.data[DOMAIN]['store']
+
+    coordinator = TouristTaxesCoordinator(hass, store)
+    await coordinator.async_config_entry_first_refresh()
+
+    async_add_entities([
+        TouristTaxesSensor(coordinator, "Daily Tax"),
+        TouristTaxesSensor(coordinator, "Total Tax"),
+    ], True)
+
+class TouristTaxesCoordinator(DataUpdateCoordinator):
+    """Class to fetch and update tourist taxes from storage."""
+
+    def __init__(self, hass, store):
+        super().__init__(
+            hass,
+            _LOGGER,
+            name="Tourist Taxes Coordinator",
+            update_interval=timedelta(minutes=5),
+        )
+        self.store = store
+        self.data = {}
+
+    async def _async_update_data(self):
+        """Fetch data from storage."""
+        data = await self.store.async_load() or {}
+        self.data = data
+        return data
+
+class TouristTaxesSensor(SensorEntity):
+    """Representation of a tourist tax sensor."""
+
+    def __init__(self, coordinator, name):
+        self.coordinator = coordinator
+        self._name = name
+        self._state = None
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def state(self):
-        return self.hass.data.get(DOMAIN, {}).get("today_amount", 0.0)
+        if self._name == "Daily Tax":
+            today = list(self.coordinator.data.keys())[-1] if self.coordinator.data else None
+            return self.coordinator.data.get(today, {}).get("amount") if today else 0
+        elif self._name == "Total Tax":
+            total = sum(entry.get("amount", 0) for entry in self.coordinator.data.values())
+            return total
+        return 0
 
     @property
-    def extra_state_attributes(self):
-        d = self.hass.data.get(DOMAIN, {})
-        return {
-            "personen": d.get("today_people", 0),
-            "prijs_per_persoon": PRICE_PER_PERSON
-        }
+    def unit_of_measurement(self):
+        return "€"
 
-class TouristTaxTotalSensor(Entity):
-    def __init__(self, hass):
-        self.hass = hass
-        self._attr_name = "Toeristenbelasting Totaal"
-        self._attr_unique_id = "toeristenbelasting_totaal"
-
-    @property
-    def state(self):
-        return self.hass.data.get(DOMAIN, {}).get("total_amount", 0.0)
-
-    @property
-    def extra_state_attributes(self):
-        d = self.hass.data.get(DOMAIN, {})
-        return {
-            "totaal_nachten": d.get("total_nights", 0),
-            "prijs_per_persoon": PRICE_PER_PERSON
-        }
+    async def async_update(self):
+        """Update the sensor."""
+        await self.coordinator.async_request_refresh()
