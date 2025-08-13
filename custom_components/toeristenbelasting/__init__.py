@@ -1,63 +1,73 @@
-"""Tourist Taxes integration for Home Assistant"""
-from datetime import datetime, timedelta, time
+"""Tourist Taxes integration for Home Assistant."""
+from datetime import datetime, timedelta
 import logging
-
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import discovery
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers.event import async_track_time_change
-from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, RESIDENTS, GUEST_INPUT_ENTITY, PRICE_PER_PERSON, STORAGE_KEY
+from .const import DOMAIN, PRICE_PER_PERSON, RESIDENTS
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the integration (legacy setup)."""
-    _LOGGER.info("Tourist Taxes: async_setup called")
-    return True
+    """Set up the integration."""
+    store = hass.helpers.storage.Store(1, f"{DOMAIN}.json")
+    hass.data[DOMAIN] = {"store": store}
 
-async def async_setup_entry(hass: HomeAssistant, entry):
-    """Set up the integration from a config entry."""
-    _LOGGER.info("Tourist Taxes: async_setup_entry called")
+    coordinator = TouristTaxesCoordinator(hass, store)
+    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN]["coordinator"] = coordinator
 
-    hass.data.setdefault(DOMAIN, {})
-    store = Store(hass, 1, STORAGE_KEY)
-    hass.data[DOMAIN]['store'] = store
+    # Normale modus: elke avond 23:00
+    async_track_time_change(hass, lambda *_: check_tourist_tax(hass), hour=23, minute=0)
 
-    async def check_tourist_tax(now_time=None):
-        """Check who is home and calculate tourist tax."""
-        guests = hass.states.get(GUEST_INPUT_ENTITY)
-        guests_count = int(guests.state) if guests else 0
-
-        residents_home = [r for r in RESIDENTS if hass.states.is_state(r, "home")]
-        total_people = len(residents_home) + guests_count
-
-        amount = total_people * PRICE_PER_PERSON
-        _LOGGER.info(
-            "TOURIST TAX CALCULATION: %d residents + %d guests = %d total, amount €%.2f",
-            len(residents_home),
-            guests_count,
-            total_people,
-            amount,
-        )
-
-        # Sla het op in storage
-        data = await store.async_load() or {}
-        today = datetime.now().strftime("%Y-%m-%d")
-        data[today] = {"people": total_people, "amount": amount}
-        await store.async_save(data)
-
-    # Kies modus: test of productie
-    mode = entry.data.get("mode", "prod")
+    # TESTMODUS: +2 minuten
     now = datetime.now()
-    if mode == "test":
-        test_time = (now + timedelta(minutes=2)).time()
-        _LOGGER.info("TESTMODUS: Berekening om %s", test_time.strftime("%H:%M"))
-        async_track_time_change(hass, check_tourist_tax, hour=test_time.hour, minute=test_time.minute)
-    else:
-        async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
-
-    # Sensor platform laden
-    await discovery.async_load_platform(hass, "sensor", DOMAIN, {}, entry.data)
+    test_time = (now + timedelta(minutes=2)).time()
+    async_track_time_change(hass, lambda *_: check_tourist_tax(hass, test=True),
+                            hour=test_time.hour, minute=test_time.minute)
 
     return True
+
+async def check_tourist_tax(hass: HomeAssistant, test=False):
+    """Tel het aantal aanwezige bewoners + gasten en sla op."""
+    coordinator: TouristTaxesCoordinator = hass.data[DOMAIN]["coordinator"]
+    guests = hass.states.get(f"input_number.{DOMAIN}_guests")
+    guest_count = int(float(guests.state)) if guests else 0
+
+    present = 0
+    for person in RESIDENTS:
+        state = hass.states.get(f"person.{person}")
+        if state and state.state == "home":
+            present += 1
+
+    total_people = present + guest_count
+    today = datetime.now().strftime("%Y-%m-%d")
+    amount = total_people * PRICE_PER_PERSON
+
+    # Opslaan in coordinator.data
+    coordinator.data[today] = amount
+    await coordinator.store.async_save(coordinator.data)
+
+    if test:
+        _LOGGER.info(f"TESTMODUS: Berekening om {datetime.now().strftime('%H:%M')}: {total_people} personen, €{amount:.2f}")
+    else:
+        _LOGGER.info(f"Toeristenbelasting berekend voor {today}: {total_people} personen, €{amount:.2f}")
+
+class TouristTaxesCoordinator(DataUpdateCoordinator):
+    """Coordinator voor toeristenbelasting."""
+
+    def __init__(self, hass, store):
+        super().__init__(
+            hass,
+            _LOGGER,
+            name="Tourist Taxes Coordinator",
+            update_interval=timedelta(minutes=5),
+        )
+        self.store = store
+        self.data = {}
+
+    async def _async_update_data(self):
+        loaded = await self.store.async_load() or {}
+        self.data = loaded
+        return self.data
