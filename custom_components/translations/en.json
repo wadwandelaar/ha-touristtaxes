@@ -1,3 +1,14 @@
 {
-  "title": "Tourist Tax"
+  "title": "Tourist Tax",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Tourist Tax",
+        "description": "Choose mode",
+        "data": {
+          "mode": "Mode"
+        }
+      }
+    }
+  }
 }

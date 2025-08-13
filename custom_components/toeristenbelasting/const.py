@@ -1,14 +1,14 @@
-DOMAIN = "toeristenbelasting"
+DOMAIN = "touristtaxes"
 
 RESIDENTS = [
     "person.rempt",
     "person.caroline"
 ]
 
-GUEST_INPUT_ENTITY = "input_number.toeristenbelasting_gasten"
+GUEST_INPUT_ENTITY = "input_number.touristtaxes_guests"
 
 PRICE_PER_PERSON = 2.40
-STORAGE_KEY = "toeristenbelasting_data"
+STORAGE_KEY = "touristtaxes_data"
 
 CONF_MODE = "mode"
 MODE_TEST = "test"
