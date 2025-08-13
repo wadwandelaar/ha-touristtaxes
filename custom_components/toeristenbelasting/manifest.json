@@ -5,5 +5,6 @@
   "documentation": "",
   "requirements": [],
   "codeowners": ["@wadwandelaar"],
-  "config_flow": false
+  "integration_type": "hub"
 }
+

@@ -11,7 +11,6 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup(hass, config):
     store = Store(hass, 1, STORAGE_KEY)
 
-    # Data laden of nieuw starten
     data = await store.async_load() or {
         "total_nights": 0,
         "total_amount": 0.0
@@ -34,44 +33,28 @@ async def async_setup(hass, config):
 
         await store.async_save(data)
 
-        hass.states.async_set(
-            f"sensor.{DOMAIN}_vandaag",
-            amount,
-            {
-                "personen": total_people,
-                "prijs_per_persoon": PRICE_PER_PERSON
-            }
-        )
+        hass.data[DOMAIN] = {
+            "today_people": total_people,
+            "today_amount": amount,
+            "total_nights": data["total_nights"],
+            "total_amount": data["total_amount"]
+        }
 
-        hass.states.async_set(
-            f"sensor.{DOMAIN}_totaal",
-            data["total_amount"],
-            {
-                "totaal_nachten": data["total_nights"],
-                "prijs_per_persoon": PRICE_PER_PERSON
-            }
-        )
+        # Force sensor update
+        for entity in hass.data.get(f"{DOMAIN}_entities", []):
+            await entity.async_update_ha_state(True)
 
-        _LOGGER.info(
-            "Toeristenbelasting berekend: %s personen, €%s",
-            total_people, amount
-        )
+        _LOGGER.info("Toeristenbelasting: %s pers, €%s", total_people, amount)
 
-    #
-    # TEST INSTELLING — nu + 2 minuten
-    #
+    # TESTMODUS — nu + 2 minuten
     now = datetime.now()
     test_time = (now + timedelta(minutes=2)).time()
-    _LOGGER.warning(
-        "TESTMODUS: toeristenbelasting wordt berekend om %02d:%02d",
-        test_time.hour, test_time.minute
-    )
+    _LOGGER.warning("TESTMODUS: Berekening om %02d:%02d", test_time.hour, test_time.minute)
     async_track_time_change(hass, check_tourist_tax, hour=test_time.hour, minute=test_time.minute)
 
-    #
-    # PRODUCTIE INSTELLING — elke dag om 23:00
-    # (later inschakelen als je klaar bent met testen)
-    #
+    # PRODUCTIE — elke dag om 23:00
     # async_track_time_change(hass, check_tourist_tax, hour=23, minute=0)
+
+    hass.helpers.discovery.load_platform("sensor", DOMAIN, {}, config)
 
     return True

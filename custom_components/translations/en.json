@@ -1,7 +1,3 @@
 {
-  "title": "Tourist Tax",
-  "state": {
-    "vandaag": "Today's Tax",
-    "totaal": "Total Tax"
-  }
+  "title": "Tourist Tax"
 }
