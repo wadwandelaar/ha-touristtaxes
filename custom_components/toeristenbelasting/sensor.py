@@ -1,8 +1,9 @@
 import json
 import os
-from datetime import datetime
 import logging
+from datetime import datetime
 from functools import partial
+
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
@@ -15,6 +16,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
     hass.data[DOMAIN] = sensor
+    await sensor.load_data()
     await sensor.async_schedule_update()
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.save_data)
     return True
@@ -27,16 +29,19 @@ class TouristTaxSensor(Entity):
         self._days = {}
         self._unsub_time = None
         self._data_file = os.path.join(hass.config.path(), DATA_FILE)
-        self.load_data()
 
-    def load_data(self):
-        try:
+    async def load_data(self):
+        def _read_data():
             if os.path.exists(self._data_file):
                 with open(self._data_file, "r") as f:
-                    data = json.load(f)
-                self._days = data.get("days", {})
-                self._state = data.get("total", 0.0)
-                _LOGGER.debug(f"TouristTaxes: Loaded data from {self._data_file}")
+                    return json.load(f)
+            return {}
+
+        try:
+            data = await self.hass.async_add_executor_job(_read_data)
+            self._days = data.get("days", {})
+            self._state = data.get("total", 0.0)
+            _LOGGER.debug(f"TouristTaxes: Loaded data from {self._data_file}")
         except Exception as e:
             _LOGGER.error(f"TouristTaxes: Failed to load data: {e}")
 
@@ -72,7 +77,12 @@ class TouristTaxSensor(Entity):
             )
             _LOGGER.debug(f"TouristTaxes: Scheduled update for {hour:02}:{minute:02}")
         else:
-            _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found")
+            _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found. Retrying in 30 seconds.")
+
+            async def retry_schedule(_):
+                await self.async_schedule_update()
+
+            self.hass.loop.call_later(30, lambda: self.hass.async_create_task(retry_schedule(None)))
 
     async def _update_daily(self, now=None):
         try:
