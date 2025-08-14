@@ -13,7 +13,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     async_add_entities([sensor])
     await sensor.async_schedule_update()
 
-    # Save for service use
+    # Maak sensor beschikbaar voor services
     hass.data[DOMAIN] = sensor
 
     return True
@@ -52,14 +52,12 @@ class TouristTaxSensor(Entity):
         try:
             now = now or datetime.now()
 
-            # Haal de zone op via entity_id
             zone_entity_id = self._config['home_zone']
             zone = self.hass.states.get(zone_entity_id)
             if not zone:
                 _LOGGER.error(f"TouristTaxes: Zone {zone_entity_id} not found")
                 return
 
-            # Haal 'home' uit 'zone.home'
             zone_id = zone_entity_id.split(".")[-1].lower()
 
             person_entities = self.hass.states.async_entity_ids("person")
@@ -68,12 +66,25 @@ class TouristTaxSensor(Entity):
                 if self.hass.states.get(e).state.lower() == zone_id
             ]
 
-            # Logging wie er wordt meegeteld
+            persons_count = len(persons_in_zone)
+
+            guest_state = self.hass.states.get("input_number.tourist_guests")
+            guests = 0
+            if guest_state is not None:
+                try:
+                    guests = int(float(guest_state.state))
+                except ValueError:
+                    guests = 0
+
+            total_persons = persons_count + guests
+
             _LOGGER.debug(f"TouristTaxes: Zone ID = '{zone_id}'")
-            _LOGGER.debug(f"TouristTaxes: Personen in zone '{zone_id}': {[e for e in persons_in_zone]}")
+            _LOGGER.debug(f"TouristTaxes: Personen in zone '{zone_id}': {persons_in_zone}")
+            _LOGGER.debug(f"TouristTaxes: Logés (input_number.tourist_guests): {guests}")
+            _LOGGER.debug(f"TouristTaxes: Totaal personen (echt + logés): {total_persons}")
 
             day_name = now.strftime("%A %d %b")
-            self._days[day_name] = len(persons_in_zone)
+            self._days[day_name] = total_persons
 
             self._state = round(
                 sum(self._days.values()) * self._config['price_per_person'],
@@ -81,10 +92,17 @@ class TouristTaxSensor(Entity):
             )
 
             self.async_write_ha_state()
-            _LOGGER.info(f"TouristTaxes: Updated {day_name} - {len(persons_in_zone)} persons -> €{self._state}")
+            _LOGGER.info(f"TouristTaxes: Updated {day_name} - {total_persons} persons -> €{self._state}")
 
         except Exception as e:
             _LOGGER.error(f"TouristTaxes: Update failed: {e}")
+
+    def reset_data(self):
+        """Reset the daily data and total amount."""
+        self._days = {}
+        self._state = 0.0
+        self.async_write_ha_state()
+        _LOGGER.info("TouristTaxes: Data has been reset to 0.")
 
     @property
     def name(self):
