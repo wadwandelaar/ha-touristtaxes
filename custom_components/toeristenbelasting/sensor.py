@@ -2,10 +2,10 @@ import json
 import os
 from datetime import datetime
 import logging
-from functools import partial
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from datetime import timedelta
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,33 +17,27 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
 
-    # Save sensor instance for service calls
     hass.data[DOMAIN] = sensor
 
     await sensor.async_schedule_update()
 
-    # Save data on stop event
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.save_data)
 
     return True
-
 
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
         self.hass = hass
         self._config = config_entry.data
         self._state = 0.0
-        self._days = {}  # Dict met dagnaam -> aantal personen (incl. gasten)
-        self._unsub_time = None
-        self._data_file = os.path.join(
-            hass.config.path(), DATA_FILE
-        )
+        self._days = {}
+        self._unsub_interval = None
+        self._data_file = os.path.join(hass.config.path(), DATA_FILE)
+        self._last_update = None
 
-        # Laad eerdere data als die bestaat
         self.load_data()
 
     def load_data(self):
-        """Laad data uit json bestand."""
         try:
             if os.path.exists(self._data_file):
                 with open(self._data_file, "r") as f:
@@ -55,7 +49,6 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"TouristTaxes: Failed to load data: {e}")
 
     def save_data(self, event=None):
-        """Sla data op in json bestand."""
         try:
             data = {
                 "days": self._days,
@@ -68,32 +61,38 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"TouristTaxes: Failed to save data: {e}")
 
     async def async_schedule_update(self):
-        """Schedule the daily update based on input_datetime."""
-        if self._unsub_time:
-            self._unsub_time()
+        """Schedule a periodic check every minute."""
+        if self._unsub_interval:
+            self._unsub_interval()
 
-        time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
-        if time_state:
-            hour = int(time_state.attributes.get("hour", 23))
-            minute = int(time_state.attributes.get("minute", 0))
+        self._unsub_interval = async_track_time_interval(
+            self.hass, self._check_and_update, timedelta(minutes=1)
+        )
+        _LOGGER.debug("TouristTaxes: Scheduled minute-based update check")
 
-            self._unsub_time = async_track_time_change(
-                self.hass,
-                partial(self._update_daily),
-                hour=hour,
-                minute=minute,
-                second=0
-            )
-            _LOGGER.debug(f"TouristTaxes: Scheduled update for {hour:02}:{minute:02}")
-        else:
-            _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found")
+    async def _check_and_update(self, now):
+        """Check if it's the correct time to update and do it once per day."""
+        try:
+            time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
+            if not time_state:
+                _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found")
+                return
+
+            target_hour = int(time_state.attributes.get("hour", 23))
+            target_minute = int(time_state.attributes.get("minute", 0))
+
+            if now.hour == target_hour and now.minute == target_minute:
+                today = now.strftime("%Y-%m-%d")
+                if self._last_update != today:
+                    _LOGGER.debug("TouristTaxes: Triggered scheduled daily update")
+                    await self._update_daily(now)
+                    self._last_update = today
+        except Exception as e:
+            _LOGGER.error(f"TouristTaxes: Error in scheduled update check: {e}")
 
     async def _update_daily(self, now=None):
-        """Perform the daily update."""
         try:
             now = now or datetime.now()
-
-            # Zone entity_id uit config
             zone_entity_id = self._config.get('home_zone', 'zone.home')
             zone = self.hass.states.get(zone_entity_id)
             if not zone:
@@ -102,21 +101,19 @@ class TouristTaxSensor(Entity):
 
             zone_id = zone_entity_id.split(".")[-1].lower()
 
-            # Personen in zone tellen
             person_entities = self.hass.states.async_entity_ids("person")
             persons_in_zone = [
                 e for e in person_entities
                 if self.hass.states.get(e).state.lower() == zone_id
             ]
 
-            # Gasten aantal uit input_number.tourist_guests
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = 0
             if guests_state and guests_state.state not in ("unknown", "unavailable"):
                 try:
                     guests = int(float(guests_state.state))
                 except ValueError:
-                    _LOGGER.warning("TouristTaxes: input_number.tourist_guests has invalid value")
+                    _LOGGER.warning("TouristTaxes: Invalid value in input_number.tourist_guests")
 
             total_persons = len(persons_in_zone) + guests
 
@@ -132,7 +129,6 @@ class TouristTaxSensor(Entity):
 
             _LOGGER.info(f"TouristTaxes: Updated {day_name} - {total_persons} persons (incl. {guests} guests) -> €{self._state}")
 
-            # Data direct opslaan na update
             self.save_data()
 
         except Exception as e:
@@ -151,13 +147,13 @@ class TouristTaxSensor(Entity):
         return {
             'days': self._days,
             'price_per_person': self._config['price_per_person'],
-            'next_update_scheduled': self._unsub_time is not None
+            'next_update_scheduled': self._unsub_interval is not None
         }
 
     async def reset_data(self):
-        """Reset all stored data and update state."""
         self._days = {}
         self._state = 0.0
+        self._last_update = None
         self.async_write_ha_state()
         self.save_data()
         _LOGGER.info("TouristTaxes: Data has been reset to 0.")

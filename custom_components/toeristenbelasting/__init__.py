@@ -3,16 +3,16 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from .const import DOMAIN
 
 async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the component and register services."""
+    """Set up the TouristTaxes component."""
 
     async def handle_force_update(call: ServiceCall):
-        """Handle force update service call."""
+        """Force an update manually."""
         sensor_entity = hass.data.get(DOMAIN)
         if sensor_entity:
             await sensor_entity._update_daily(datetime.now())
 
     async def handle_reset_data(call: ServiceCall):
-        """Handle reset data service call."""
+        """Reset the sensor data."""
         sensor_entity = hass.data.get(DOMAIN)
         if sensor_entity:
             await sensor_entity.reset_data()
@@ -23,7 +23,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry):
-    """Set up from config entry."""
+    """Set up the config entry."""
     hass.async_create_task(
         hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     )
