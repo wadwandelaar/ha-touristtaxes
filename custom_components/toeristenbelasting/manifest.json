@@ -6,6 +6,5 @@
   "documentation": "",
   "requirements": [],
   "dependencies": ["person", "zone"],
-  "codeowners": ["@wadwandelaar"],
-  "iot_class": "calculated"
+  "codeowners": ["@wadwandelaar"]
 }
