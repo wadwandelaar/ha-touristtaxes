@@ -2,12 +2,13 @@ from datetime import datetime
 import logging
 from functools import partial
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.event import async_track_time_change, async_track_state_change
+from homeassistant.helpers.event import async_track_time_change, async_track_state_change_event
+from homeassistant.core import HomeAssistant  # Nieuw: vervangt HomeAssistantType
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
+async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities):
     """Set up the sensor."""
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
@@ -19,7 +20,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     return True
 
 class TouristTaxSensor(Entity):
-    def __init__(self, hass, config_entry):
+    def __init__(self, hass: HomeAssistant, config_entry):
         self.hass = hass
         self._config = config_entry.data
         self._state = 0.0
@@ -29,7 +30,7 @@ class TouristTaxSensor(Entity):
 
     async def async_added_to_hass(self):
         """Register listener for changes to the update time."""
-        self._unsub_input_datetime = async_track_state_change(
+        self._unsub_input_datetime = async_track_state_change_event(
             self.hass,
             "input_datetime.tourist_tax_update_time",
             self._handle_update_time_change
@@ -44,7 +45,7 @@ class TouristTaxSensor(Entity):
             self._unsub_input_datetime()
             self._unsub_input_datetime = None
 
-    async def _handle_update_time_change(self, entity_id, old_state, new_state):
+    async def _handle_update_time_change(self, event):
         _LOGGER.info("TouristTaxes: Update time changed, rescheduling daily update")
         await self.async_schedule_update()
 
