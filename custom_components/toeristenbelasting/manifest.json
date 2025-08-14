@@ -2,9 +2,7 @@
   "domain": "touristtaxes",
   "name": "Tourist Taxes",
   "version": "1.0.0",
-  "documentation": "",
   "requirements": [],
-  "codeowners": ["@wadwandelaar"],
-  "config_flow": true,
-  "integration_type": "hub"
+  "dependencies": [],
+  "codeowners": ["@wadwandelaar"]
 }

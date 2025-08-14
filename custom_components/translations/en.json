@@ -1,12 +1,12 @@
 {
-  "title": "Tourist Tax",
   "config": {
     "step": {
       "user": {
-        "title": "Configure Tourist Tax",
-        "description": "Choose mode",
+        "title": "Tourist Taxes Configuration",
+        "description": "Configure the tourist taxes settings",
         "data": {
-          "mode": "Mode"
+          "price_per_person": "Price per person per day",
+          "home_zone": "Home zone to monitor"
         }
       }
     }
