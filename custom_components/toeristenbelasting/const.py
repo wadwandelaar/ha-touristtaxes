@@ -1,2 +1,3 @@
 DOMAIN = "touristtaxes"
 DEFAULT_PRICE = 2.40
+DEFAULT_UPDATE_TIME = "23:00"

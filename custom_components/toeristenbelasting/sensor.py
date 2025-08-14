@@ -42,3 +42,22 @@ class TouristTaxSensor(SensorEntity):
         self._days[now.strftime("%A %d %b")] = len(persons) + self._guests
         self._attr_native_value = round(sum(self._days.values()) * self._config['price_per_person'], 2)
         self.async_write_ha_state()
+
+    async def _schedule_daily_update(self):
+        """Schedule update voor de geconfigureerde tijd"""
+        if hasattr(self, '_unsub_time'):
+            self._unsub_time()  # Cancel vorige schedule
+
+        # Haal tijd uit config
+        update_time = self._config.get("update_time", "23:00")
+        hour, minute = map(int, update_time.split(":"))
+        
+        self._unsub_time = async_track_time_change(
+            self.hass,
+            self._update_daily,
+            hour=hour,
+            minute=minute
+        )
+        
+        # Update attributen
+        self._attr_extra_state_attributes["update_time"] = f"{hour:02d}:{minute:02d}"
