@@ -44,13 +44,9 @@ class TouristTaxSensor(SensorEntity):
         self.async_write_ha_state()
 
     async def _schedule_daily_update(self):
-        """Schedule update voor de geconfigureerde tijd"""
-        if hasattr(self, '_unsub_time'):
-            self._unsub_time()  # Cancel vorige schedule
-
-        # Haal tijd uit config
-        update_time = self._config.get("update_time", "23:00")
-        hour, minute = map(int, update_time.split(":"))
+        """Lees tijd uit input_datetime"""
+        time_str = self.hass.states.get("input_datetime.tourist_tax_update_time").state
+        hour, minute, _ = map(int, time_str.split(":"))
         
         self._unsub_time = async_track_time_change(
             self.hass,
