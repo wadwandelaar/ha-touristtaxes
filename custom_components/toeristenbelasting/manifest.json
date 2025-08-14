@@ -2,7 +2,10 @@
   "domain": "touristtaxes",
   "name": "Tourist Taxes",
   "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "",
   "requirements": [],
-  "dependencies": [],
-  "codeowners": ["@wadwandelaar"]
+  "dependencies": ["person", "zone"],
+  "codeowners": ["@wadwandelaar"],
+  "iot_class": "calculated"
 }

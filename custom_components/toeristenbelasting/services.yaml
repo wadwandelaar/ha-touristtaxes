@@ -1,0 +1,9 @@
+update_time:
+  description: Update the daily update time
+  fields:
+    hour:
+      description: The hour to update (0-23)
+      example: 22
+    minute:
+      description: The minute to update (0-59)
+      example: 30
