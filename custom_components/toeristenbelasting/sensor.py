@@ -25,11 +25,33 @@ class TouristTaxSensor(Entity):
         self._state = 0.0
         self._days = {}
         self._unsub_time = None
+        self._unsub_input_datetime = None
+
+    async def async_added_to_hass(self):
+        """Register listener for changes to the update time."""
+        self._unsub_input_datetime = self.hass.helpers.event.async_track_state_change(
+            "input_datetime.tourist_tax_update_time",
+            self._handle_update_time_change
+        )
+
+    async def async_will_remove_from_hass(self):
+        """Cleanup listeners when entity is removed."""
+        if self._unsub_time:
+            self._unsub_time()
+            self._unsub_time = None
+        if self._unsub_input_datetime:
+            self._unsub_input_datetime()
+            self._unsub_input_datetime = None
+
+    async def _handle_update_time_change(self, entity_id, old_state, new_state):
+        _LOGGER.info("TouristTaxes: Update time changed, rescheduling daily update")
+        await self.async_schedule_update()
 
     async def async_schedule_update(self):
         """Schedule the daily update based on input_datetime."""
         if self._unsub_time:
             self._unsub_time()
+            self._unsub_time = None
 
         time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
         if time_state:
