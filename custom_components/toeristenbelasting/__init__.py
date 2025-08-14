@@ -1,6 +1,5 @@
 from datetime import datetime
-from homeassistant.core import ServiceCall
-from homeassistant.helpers.typing import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from .const import DOMAIN
 
 async def async_setup(hass: HomeAssistant, config: dict):
