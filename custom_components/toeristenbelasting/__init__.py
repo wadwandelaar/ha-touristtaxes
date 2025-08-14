@@ -5,15 +5,14 @@ from .const import DOMAIN
 
 async def async_setup(hass: HomeAssistantType, config: dict):
     """Set up the component."""
+
     async def handle_force_update(call: ServiceCall):
         """Handle force update service call."""
-        sensor_entity = next(
-            (entity for entity in hass.data.get('sensor', {}).entities 
-            if entity.entity_id == 'sensor.tourist_taxes'),
-            None
-        )
+        sensor_entity = hass.data.get(DOMAIN)
         if sensor_entity:
-            await sensor_entity._update_daily(datetime.now())
+            await sensor_entity._update_daily()
+        else:
+            hass.logger.warning("TouristTaxes: Sensor entity not found for force update")
 
     # Registreer de service
     hass.services.async_register(
@@ -21,7 +20,7 @@ async def async_setup(hass: HomeAssistantType, config: dict):
         "force_update",
         handle_force_update
     )
-    
+
     return True
 
 async def async_setup_entry(hass: HomeAssistantType, entry):
