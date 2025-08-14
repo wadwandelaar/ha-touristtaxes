@@ -2,7 +2,7 @@ from datetime import datetime
 import logging
 from functools import partial
 from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import async_track_time_change, async_track_state_change
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +29,8 @@ class TouristTaxSensor(Entity):
 
     async def async_added_to_hass(self):
         """Register listener for changes to the update time."""
-        self._unsub_input_datetime = self.hass.helpers.event.async_track_state_change(
+        self._unsub_input_datetime = async_track_state_change(
+            self.hass,
             "input_datetime.tourist_tax_update_time",
             self._handle_update_time_change
         )
