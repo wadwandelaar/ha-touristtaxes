@@ -7,7 +7,10 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the sensor."""
-    async_add_entities([TouristTaxSensor(hass, config_entry)])
+    sensor = TouristTaxSensor(hass, config_entry)
+    async_add_entities([sensor])
+    await sensor.async_schedule_update()  # Nieuwe methode aanroepen
+    return True
 
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
@@ -16,9 +19,8 @@ class TouristTaxSensor(Entity):
         self._state = 0.0
         self._days = {}
         self._unsub_time = None
-        self._schedule_daily_update()  # Deze methode moet bestaan!
 
-    def _schedule_daily_update(self):
+    async def async_schedule_update(self):
         """Schedule the daily update."""
         if self._unsub_time:
             self._unsub_time()
@@ -67,5 +69,6 @@ class TouristTaxSensor(Entity):
     def extra_state_attributes(self):
         return {
             'days': self._days,
-            'price_per_person': self._config['price_per_person']
+            'price_per_person': self._config['price_per_person'],
+            'next_update': self._unsub_time is not None
         }
