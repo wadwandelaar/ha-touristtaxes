@@ -9,22 +9,15 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
 DATA_FILE = "touristtaxes_data.json"
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up the sensor from a config entry."""
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
-
     hass.data[DOMAIN] = sensor
-
     await sensor.async_schedule_update()
-
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.save_data)
-
     return True
-
 
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
@@ -34,11 +27,9 @@ class TouristTaxSensor(Entity):
         self._days = {}
         self._unsub_time = None
         self._data_file = os.path.join(hass.config.path(), DATA_FILE)
-
         self.load_data()
 
     def load_data(self):
-        """Load data from JSON if exists."""
         try:
             if os.path.exists(self._data_file):
                 with open(self._data_file, "r") as f:
@@ -50,12 +41,10 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"TouristTaxes: Failed to load data: {e}")
 
     def _write_data_sync(self, data):
-        """Sync write called inside executor."""
         with open(self._data_file, "w") as f:
             json.dump(data, f, indent=2)
 
     async def save_data(self, event=None):
-        """Save the days & total to JSON via executor job."""
         try:
             data = {
                 "days": self._days,
@@ -67,7 +56,6 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"TouristTaxes: Failed to save data: {e}")
 
     async def async_schedule_update(self):
-        """Schedule the daily update at the configured time."""
         if self._unsub_time:
             self._unsub_time()
 
@@ -87,31 +75,37 @@ class TouristTaxSensor(Entity):
             _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found")
 
     async def _update_daily(self, now=None):
-        """Perform the daily update and save data."""
         try:
             now = now or datetime.now()
             zone_id = self._config.get("home_zone", "zone.home").split(".", 1)[-1].lower()
+
             persons = [
                 e for e in self.hass.states.async_entity_ids("person")
                 if self.hass.states.get(e).state.lower() == zone_id
             ]
-            guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if (guests_state and guests_state.state not in ("unknown", "unavailable")) else 0
-            total_persons = len(persons) + guests
 
+            guests_state = self.hass.states.get("input_number.tourist_guests")
+            guests = int(float(guests_state.state)) if (
+                guests_state and guests_state.state not in ("unknown", "unavailable")
+            ) else 0
+
+            total_persons = len(persons) + guests
             day_key = now.strftime("%A %d %b")
+
             self._days[day_key] = {
                 "persons_in_zone": len(persons),
                 "guests": guests,
                 "total": total_persons
             }
-            self._state = round(sum(d["total"] for d in self._days.values()) * self._config["price_per_person"], 2)
+
+            self._state = round(
+                sum(d["total"] for d in self._days.values()) * self._config["price_per_person"], 2
+            )
 
             self.async_write_ha_state()
             await self.save_data()
 
             _LOGGER.info(f"TouristTaxes: Updated {day_key} → zone: {len(persons)}, guests: {guests}, total: {total_persons}, €{self._state}")
-
         except Exception as e:
             _LOGGER.error(f"TouristTaxes: Update failed: {e}")
 
@@ -132,7 +126,6 @@ class TouristTaxSensor(Entity):
         }
 
     async def reset_data(self):
-        """Reset stored data and JSON file via executor."""
         self._days = {}
         self._state = 0.0
         self.async_write_ha_state()
