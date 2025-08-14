@@ -12,8 +12,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
     await sensor.async_schedule_update()
-    
-    # Opslaan in hass.data voor externe toegang (bv. via service)
+
+    # Save for service use
     hass.data[DOMAIN] = sensor
 
     return True
@@ -52,19 +52,25 @@ class TouristTaxSensor(Entity):
         try:
             now = now or datetime.now()
 
-            # Haal de zone naam op
-            zone_entity = self.hass.states.get(self._config['home_zone'])
-            if not zone_entity:
-                _LOGGER.error(f"TouristTaxes: Zone {self._config['home_zone']} not found")
+            # Haal de zone op via entity_id
+            zone_entity_id = self._config['home_zone']
+            zone = self.hass.states.get(zone_entity_id)
+            if not zone:
+                _LOGGER.error(f"TouristTaxes: Zone {zone_entity_id} not found")
                 return
 
-            zone_name = zone_entity.name.lower()
-            person_entities = self.hass.states.async_entity_ids("person")
+            # Haal 'home' uit 'zone.home'
+            zone_id = zone_entity_id.split(".")[-1].lower()
 
+            person_entities = self.hass.states.async_entity_ids("person")
             persons_in_zone = [
                 e for e in person_entities
-                if self.hass.states.get(e).state.lower() == zone_name
+                if self.hass.states.get(e).state.lower() == zone_id
             ]
+
+            # Logging wie er wordt meegeteld
+            _LOGGER.debug(f"TouristTaxes: Zone ID = '{zone_id}'")
+            _LOGGER.debug(f"TouristTaxes: Personen in zone '{zone_id}': {[e for e in persons_in_zone]}")
 
             day_name = now.strftime("%A %d %b")
             self._days[day_name] = len(persons_in_zone)
