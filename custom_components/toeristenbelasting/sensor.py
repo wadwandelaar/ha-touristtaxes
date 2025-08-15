@@ -18,6 +18,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     hass.data[DOMAIN] = sensor
     await sensor.load_data()
     await sensor.async_schedule_update()
+    
+    # Add listener for time changes
+    async def handle_time_change(event):
+        if event.data.get("entity_id") == "input_datetime.tourist_tax_update_time":
+            _LOGGER.debug("Detected change in update time, rescheduling...")
+            await sensor.async_schedule_update()
+    
+    hass.bus.async_listen("state_changed", handle_time_change)
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.save_data)
     return True
 
@@ -41,9 +49,9 @@ class TouristTaxSensor(Entity):
             data = await self.hass.async_add_executor_job(_read_data)
             self._days = data.get("days", {})
             self._state = data.get("total", 0.0)
-            _LOGGER.debug(f"TouristTaxes: Loaded data from {self._data_file}")
+            _LOGGER.debug(f"Loaded data from {self._data_file}")
         except Exception as e:
-            _LOGGER.error(f"TouristTaxes: Failed to load data: {e}")
+            _LOGGER.error(f"Failed to load data: {e}")
 
     def _write_data_sync(self, data):
         with open(self._data_file, "w") as f:
@@ -56,33 +64,44 @@ class TouristTaxSensor(Entity):
                 "total": self._state,
             }
             await self.hass.async_add_executor_job(self._write_data_sync, data)
-            _LOGGER.debug(f"TouristTaxes: Saved data to {self._data_file}")
+            _LOGGER.debug(f"Saved data to {self._data_file}")
         except Exception as e:
-            _LOGGER.error(f"TouristTaxes: Failed to save data: {e}")
+            _LOGGER.error(f"Failed to save data: {e}")
 
     async def async_schedule_update(self):
+        # Cancel existing timer if any
         if self._unsub_time:
             self._unsub_time()
+            self._unsub_time = None
 
+        # Get new time
         time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
-        if time_state:
+        if not time_state:
+            _LOGGER.warning("Update time entity not found. Retrying in 30 seconds.")
+            self.hass.loop.call_later(
+                30, 
+                lambda: self.hass.async_create_task(self.async_schedule_update())
+            )
+            return
+
+        try:
             hour = int(time_state.attributes.get("hour", 23))
             minute = int(time_state.attributes.get("minute", 0))
+            
             self._unsub_time = async_track_time_change(
                 self.hass,
-                partial(self._update_daily),
+                self._update_daily,
                 hour=hour,
                 minute=minute,
                 second=0
             )
-            _LOGGER.debug(f"TouristTaxes: Scheduled update for {hour:02}:{minute:02}")
-        else:
-            _LOGGER.warning("TouristTaxes: input_datetime.tourist_tax_update_time not found. Retrying in 30 seconds.")
-
-            async def retry_schedule(_):
-                await self.async_schedule_update()
-
-            self.hass.loop.call_later(30, lambda: self.hass.async_create_task(retry_schedule(None)))
+            _LOGGER.info(f"Scheduled daily update at {hour:02d}:{minute:02d}")
+        except Exception as e:
+            _LOGGER.error(f"Failed to schedule update: {e}")
+            self.hass.loop.call_later(
+                30,
+                lambda: self.hass.async_create_task(self.async_schedule_update())
+            )
 
     async def _update_daily(self, now=None):
         try:
@@ -115,9 +134,13 @@ class TouristTaxSensor(Entity):
             self.async_write_ha_state()
             await self.save_data()
 
-            _LOGGER.info(f"TouristTaxes: Updated {day_key} → zone: {len(persons)}, guests: {guests}, total: {total_persons}, €{self._state}")
+            _LOGGER.info(
+                f"Updated {day_key} → "
+                f"zone: {len(persons)}, guests: {guests}, "
+                f"total: {total_persons}, €{self._state}"
+            )
         except Exception as e:
-            _LOGGER.error(f"TouristTaxes: Update failed: {e}")
+            _LOGGER.error(f"Update failed: {e}")
 
     @property
     def name(self):
@@ -140,4 +163,4 @@ class TouristTaxSensor(Entity):
         self._state = 0.0
         self.async_write_ha_state()
         await self.save_data()
-        _LOGGER.info("TouristTaxes: Data reset to empty.")
+        _LOGGER.info("Data reset to empty.")
