@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Tourist Taxes Configuration",
-        "description": "Configure the tourist taxes settings",
+        "description": "Configure the tourist taxes settings (active March-November)",
         "data": {
           "price_per_person": "Price per person per day",
           "home_zone": "Home zone to monitor"
