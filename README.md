@@ -21,6 +21,8 @@
   - [Create New File:](#create-new-file)
   - [Create New File:](#create-new-file-1)
   - [🧼 Reset Button Example](#-reset-button-example)
+  - [Add entry](#add-entry)
+  - [Dashboard](#dashboard)
 
 ---
 
@@ -103,3 +105,12 @@ grid_options:
   columns: 12
   rows: 2
 ```
+
+## Add entry
+
+Choose the price per person (default is 2.40)
+Choose the zone (default is zone.home)
+
+## Dashboard
+
+Create your own dashboard using the sensor enteties
