@@ -18,8 +18,7 @@
     - [Install using HACS:](#install-using-hacs)
   - [⚙️ Configuration](#️-configuration)
   - [Create two directories:](#create-two-directories)
-  - [Create New File:](#create-new-file)
-  - [Create New File:](#create-new-file-1)
+  - [Create 2 New File:](#create-2-new-file)
   - [🧼 Reset Button Example](#-reset-button-example)
   - [Add entry](#add-entry)
   - [Dashboard](#dashboard)
@@ -56,15 +55,15 @@ Please use responsibly.
 
 Add the following to your `configuration.yaml` file:
 
-input_number:!include_dir_merge_named touristtaxes/input_number_touristtaxes
+input_number:!include_dir_merge_named touristtaxes/input_number_touristtaxes<br>
 input_datetime:!include_dir_merge_named touristtaxes/input_datetime_touristtaxes
 
 ## Create two directories:
 
-/config/touristtaxes/input_number_touristtaxes
+/config/touristtaxes/input_number_touristtaxes<br>
 /config/touristtaxes/input_datetime_touristtaxes
 
-## Create New File:
+## Create 2 New File:
 /config/touristtaxes/input_number_touristtaxes/tourist_guests.yaml
 
 ```yaml
@@ -76,7 +75,7 @@ tourist_guests:
   mode: box
   icon: mdi:account-group
 ```
-## Create New File:
+
 /config/touristtaxes/input_datetime_touristtaxes/tourist_tax_update_time.yaml
 
 ```yaml
@@ -90,7 +89,7 @@ tourist_tax_update_time:
 
 ## 🧼 Reset Button Example
 
-To reset all data, add a **reset button** to your Home Assistant dashboard using the following YAML configuration:
+To reset all data, add a **reset button** to your dashboard:
 
 ```yaml
 show_name: true
@@ -108,7 +107,7 @@ grid_options:
 
 ## Add entry
 
-Choose the price per person (default is 2.40)
+Choose the price per person (default is 2.40)<br>
 Choose the zone (default is zone.home)
 
 ## Dashboard
