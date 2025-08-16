@@ -10,15 +10,16 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-DATA_FILE = "/config/touristtaxes_data.json"  # Pas aan naar jouw config pad indien nodig
+DATA_FILE = "/config/touristtaxes_data.json"  # Pas aan indien nodig
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Setup sensor en registreer reload service."""
+    """Setup sensor en registreer reload + automatische herplanning."""
     sensor = TouristTaxSensor(hass, config_entry)
     await sensor.async_load_data()
     async_add_entities([sensor])
     hass.data[DOMAIN] = sensor
 
+    # Service om handmatig data te herladen
     async def handle_reload(call):
         await sensor.async_load_data()
         sensor.async_write_ha_state()
@@ -26,8 +27,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     hass.services.async_register(DOMAIN, "reload_data", handle_reload)
 
+    # Eerste planning op basis van input_datetime
     await sensor.async_schedule_update()
-    
+
+    # Herplan automatisch bij wijziging van input_datetime
+    hass.bus.async_listen("state_changed", lambda event: hass.async_create_task(sensor.async_schedule_update()))
+
+    # Opslaan bij afsluiten
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
     return True
 
@@ -41,7 +47,7 @@ class TouristTaxSensor(Entity):
         self._data_file = DATA_FILE
 
     async def async_load_data(self):
-        """Laad data uit JSON, merge handmatige dagen met bestaande."""
+        """Laad JSON-data en merge handmatige invoer."""
         def _read_data():
             if os.path.exists(self._data_file):
                 with open(self._data_file, "r", encoding="utf-8") as f:
@@ -50,23 +56,20 @@ class TouristTaxSensor(Entity):
 
         try:
             data = await self.hass.async_add_executor_job(_read_data)
-            
-            # Merge: handmatige data (self._days) blijft behouden naast geladen data
-            # Prioriteit aan data uit bestand, tenzij zelf toegevoegde dagen bestaan
             merged_days = {**data.get("days", {}), **self._days}
             self._days = merged_days
-            
-            # Herbereken totaal
+
             self._state = round(sum(
                 day.get("amount", 0) for day in self._days.values()
                 if self._is_date_in_season(day.get("date", ""))
             ), 2)
-            _LOGGER.debug(f"Data geladen, {len(self._days)} dagen beschikbaar, totaal €{self._state}")
+
+            _LOGGER.debug(f"Data geladen: {len(self._days)} dagen, totaal €{self._state}")
         except Exception as e:
-            _LOGGER.error(f"Fout bij laden data: {e}")
+            _LOGGER.error(f"Fout bij laden van data: {e}")
 
     async def async_save_data(self, event=None):
-        """Sla seizoen-data veilig op, zonder handmatige data te verliezen."""
+        """Sla JSON-data veilig op."""
         try:
             data = {
                 "days": {k: v for k, v in self._days.items()
@@ -77,24 +80,23 @@ class TouristTaxSensor(Entity):
             await self.hass.async_add_executor_job(self._write_data_sync, data)
             _LOGGER.debug(f"Data opgeslagen naar {self._data_file}")
         except Exception as e:
-            _LOGGER.error(f"Opslaan van data mislukt: {e}")
+            _LOGGER.error(f"Opslaan mislukt: {e}")
 
     def _write_data_sync(self, data):
-        """Veilig schrijven met tijdelijke file."""
         temp_file = f"{self._data_file}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(temp_file, self._data_file)
 
     async def async_schedule_update(self):
-        """Plan dagelijkse update op ingestelde tijd."""
+        """Plan dagelijkse update op tijd uit input_datetime."""
         if self._unsub_time:
             self._unsub_time()
             self._unsub_time = None
 
         time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
         if not time_state:
-            _LOGGER.warning("Update time entity niet gevonden, probeer over 30 sec opnieuw")
+            _LOGGER.warning("Geen input_datetime.tourist_tax_update_time gevonden. Herprobeer over 30 sec.")
             self.hass.loop.call_later(
                 30,
                 lambda: self.hass.async_create_task(self.async_schedule_update())
@@ -104,6 +106,7 @@ class TouristTaxSensor(Entity):
         try:
             hour = int(time_state.attributes.get("hour", 23))
             minute = int(time_state.attributes.get("minute", 0))
+
             self._unsub_time = async_track_time_change(
                 self.hass,
                 self._update_daily,
@@ -113,16 +116,14 @@ class TouristTaxSensor(Entity):
             )
             _LOGGER.info(f"Dagelijkse update gepland om {hour:02d}:{minute:02d}")
         except Exception as e:
-            _LOGGER.error(f"Fout bij plannen update: {e}")
+            _LOGGER.error(f"Fout bij plannen van update: {e}")
 
     async def _update_daily(self, now=None):
-        """Update toeristenbelasting data voor de dag."""
+        """Voer dagelijkse update uit op geplande tijd."""
         try:
             now = now or datetime.now()
-            current_month = now.month
-
-            if current_month < 3 or current_month > 11:
-                _LOGGER.info("Buiten seizoen (maart-november), geen update uitgevoerd.")
+            if now.month < 3 or now.month > 11:
+                _LOGGER.info("Buiten het toeristenseizoen (maart-november). Geen update uitgevoerd.")
                 return
 
             zone_id = self._config.get("home_zone", "zone.home").split(".", 1)[-1].lower()
@@ -146,7 +147,6 @@ class TouristTaxSensor(Entity):
                 "amount": round(total_persons * self._config["price_per_person"], 2)
             }
 
-            # Totaal herberekenen
             self._state = round(sum(
                 day["amount"] for day in self._days.values()
                 if self._is_date_in_season(day["date"])
@@ -156,8 +156,7 @@ class TouristTaxSensor(Entity):
             await self.async_save_data()
 
             _LOGGER.info(
-                f"Tourist tax updated for {date_display}: "
-                f"{len(persons)} persons + {guests} guests = "
+                f"Update voor {date_display}: {len(persons)} personen + {guests} gasten = "
                 f"{total_persons} × €{self._config['price_per_person']} = €{self._days[day_key]['amount']}"
             )
         except Exception as e:
@@ -169,7 +168,7 @@ class TouristTaxSensor(Entity):
             date = datetime.strptime(date_str, "%A %d %B %Y")
             return 3 <= date.month <= 11
         except ValueError:
-            return True  # Oudere data behouden als parsing mislukt
+            return True
 
     @property
     def name(self):
@@ -193,7 +192,7 @@ class TouristTaxSensor(Entity):
             except (ValueError, KeyError):
                 continue
 
-        base_attrs = {
+        return {
             "price_per_person": self._config["price_per_person"],
             "season": "March-November",
             "days": dict(sorted(self._days.items(), reverse=True)),
@@ -204,10 +203,8 @@ class TouristTaxSensor(Entity):
             "data_file": self._data_file,
         }
 
-        return base_attrs
-
     async def reset_data(self):
-        """Reset alle data, gebruik met zorg!"""
+        """Reset alle data."""
         self._days = {}
         self._state = 0.0
         self.async_write_ha_state()
