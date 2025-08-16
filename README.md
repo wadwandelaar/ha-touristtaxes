@@ -116,4 +116,7 @@ Choose the zone (default is zone.home)
 
 ## Dashboard
 
-Create your own dashboard using the sensor enteties
+Create your own dashboard using the sensor enteties<br>
+For changing the default time (e.g. input_datetime.tourist_tax_update_time)<br>
+For changing the number of guests (input_number.tourist_guests)<br>
+Anyone in the chosen zone is automatically included in the calculation
