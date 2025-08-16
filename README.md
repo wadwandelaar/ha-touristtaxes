@@ -18,7 +18,7 @@
     - [Install using HACS:](#install-using-hacs)
   - [⚙️ Configuration](#️-configuration)
   - [Create two directories:](#create-two-directories)
-  - [Create 2 New File:](#create-2-new-file)
+  - [Create 2 New Files:](#create-2-new-files)
   - [🧼 Reset Button Example](#-reset-button-example)
   - [Add entry](#add-entry)
   - [Dashboard](#dashboard)
@@ -64,7 +64,7 @@ input_datetime:!include_dir_merge_named touristtaxes/input_datetime_touristtaxes
 /config/touristtaxes/input_number_touristtaxes<br>
 /config/touristtaxes/input_datetime_touristtaxes
 ```
-## Create 2 New File:
+## Create 2 New Files:
 ```yaml
 /config/touristtaxes/input_number_touristtaxes/tourist_guests.yaml
 
