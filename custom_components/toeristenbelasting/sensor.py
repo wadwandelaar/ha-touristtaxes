@@ -21,40 +21,68 @@ class TouristTaxSensor(Entity):
         self._days = {}
         self._unsub_time = None
         self._data_file = DATA_FILE
-        self._setup_complete = False
+        self._load_attempted = False
 
     async def async_added_to_hass(self):
-        """Run when entity is added to HA."""
-        await self.async_load_data()
+        """Initialize when entity is added to HA."""
+        await self._load_with_retry()
         await self.async_schedule_update()
-        self._setup_complete = True
+
+    async def _load_with_retry(self, retries=3):
+        """Attempt loading data with retries."""
+        for attempt in range(retries):
+            try:
+                await self.async_load_data()
+                self._load_attempted = True
+                _LOGGER.info(f"Data loaded successfully (attempt {attempt + 1})")
+                self.async_write_ha_state()
+                return
+            except Exception as e:
+                _LOGGER.warning(f"Load attempt {attempt + 1} failed: {str(e)}")
+                if attempt == retries - 1:
+                    _LOGGER.error("All data load attempts failed, initializing empty dataset")
+                    self._days = {}
+                    self._state = 0.0
+                    self.async_write_ha_state()
 
     async def async_load_data(self):
-        """Thread-safe data loading."""
-        def _read_data():
-            if os.path.exists(self._data_file):
-                with open(self._data_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            return {"days": {}, "total": 0.0}
+        """Thread-safe data loading with validation."""
+        def _read_and_validate():
+            if not os.path.exists(self._data_file):
+                return {"days": {}, "total": 0.0}
+                
+            with open(self._data_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                
+            # Data validation
+            if not isinstance(data, dict):
+                raise ValueError("Invalid data format: not a dictionary")
+            if "days" not in data or "total" not in data:
+                raise ValueError("Missing required fields in JSON")
+                
+            return data
 
-        try:
-            data = await self.hass.async_add_executor_job(_read_data)
-            self._days = data.get("days", {})
-            self._state = data.get("total", 0.0)
-            _LOGGER.info(f"Loaded {len(self._days)} days, total €{self._state}")
-        except Exception as e:
-            _LOGGER.error(f"Error loading data: {e}")
+        data = await self.hass.async_add_executor_job(_read_and_validate)
+        self._days = data.get("days", {})
+        
+        # Recalculate total to ensure consistency
+        self._state = round(sum(
+            day.get("amount", 0) 
+            for day in self._days.values()
+        ), 2)
+        
+        _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
 
     async def async_schedule_update(self, *args):
-        """Schedule or reschedule the daily update."""
+        """Reliable scheduling with time change detection."""
         if self._unsub_time:
             self._unsub_time()
             self._unsub_time = None
 
         time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
         if not time_state:
-            _LOGGER.warning("Time input not found, retrying in 30s")
-            self.hass.loop.call_later(30, self._reschedule)
+            _LOGGER.warning("Time input entity not found")
+            self.hass.loop.call_later(30, lambda: self.hass.async_create_task(self.async_schedule_update()))
             return
 
         try:
@@ -63,35 +91,37 @@ class TouristTaxSensor(Entity):
             
             self._unsub_time = async_track_time_change(
                 self.hass,
-                self._update_daily,
+                self._perform_daily_update,  # Renamed for clarity
                 hour=hour,
                 minute=minute,
                 second=0
             )
-            _LOGGER.info(f"Scheduled daily update at {hour:02d}:{minute:02d}")
+            _LOGGER.info(f"Successfully scheduled update for {hour:02d}:{minute:02d}")
         except Exception as e:
-            _LOGGER.error(f"Scheduling error: {e}")
-            self.hass.loop.call_later(30, self._reschedule)
+            _LOGGER.error(f"Scheduling failed: {str(e)}")
+            self.hass.loop.call_later(30, lambda: self.hass.async_create_task(self.async_schedule_update()))
 
-    def _reschedule(self):
-        """Helper to reschedule update."""
-        self.hass.async_create_task(self.async_schedule_update())
-
-    async def _update_daily(self, now=None):
-        """Execute the daily update."""
+    async def _perform_daily_update(self, now=None):
+        """Robust daily update handler."""
         try:
             now = now or datetime.now()
             if not (3 <= now.month <= 11):
-                _LOGGER.debug("Outside tourist season")
+                _LOGGER.debug("Skipping update outside tourist season")
                 return
 
-            zone = self._config.get("home_zone", "zone.home").split(".")[-1]
-            persons = [e for e in self.hass.states.async_entity_ids("person") 
-                      if self.hass.states.get(e).state.lower() == zone]
-            
-            guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if guests_state else 0
+            # Get current residents
+            zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
+            persons = [
+                e for e in self.hass.states.async_entity_ids("person")
+                if self.hass.states.get(e).state.lower() == zone
+            ]
 
+            # Get guest count
+            guests_state = self.hass.states.get("input_number.tourist_guests")
+            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+
+            # Create day entry
+            day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
@@ -100,31 +130,41 @@ class TouristTaxSensor(Entity):
                 "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
             }
 
-            self._days[now.strftime("%Y-%m-%d")] = day_data
+            self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
             
             self.async_write_ha_state()
             await self.async_save_data()
-            _LOGGER.info(f"Updated: {day_data}")
+            
+            _LOGGER.info(
+                f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
+                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+            )
         except Exception as e:
-            _LOGGER.error(f"Update failed: {e}")
+            _LOGGER.error(f"Daily update failed: {str(e)}")
 
     async def async_save_data(self, event=None):
-        """Thread-safe data saving."""
-        def _write():
+        """Atomic file writing with error recovery."""
+        def _write_data():
             temp_file = f"{self._data_file}.tmp"
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "days": self._days,
-                    "total": self._state,
-                    "last_updated": datetime.now().isoformat()
-                }, f, indent=2)
-            os.replace(temp_file, self._data_file)
+            try:
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "days": self._days,
+                        "total": self._state,
+                        "last_updated": datetime.now().isoformat()
+                    }, f, indent=2, ensure_ascii=False)
+                os.replace(temp_file, self._data_file)
+            except Exception as e:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                raise
 
         try:
-            await self.hass.async_add_executor_job(_write)
+            await self.hass.async_add_executor_job(_write_data)
+            _LOGGER.debug(f"Data saved to {self._data_file}")
         except Exception as e:
-            _LOGGER.error(f"Save failed: {e}")
+            _LOGGER.error(f"Failed to save data: {str(e)}")
 
     @property
     def name(self):
@@ -136,41 +176,57 @@ class TouristTaxSensor(Entity):
 
     @property
     def extra_state_attributes(self):
+        """Enhanced attributes with verification data."""
         monthly = defaultdict(lambda: {"days": 0, "persons": 0, "amount": 0.0})
-        for date_str, data in self._days.items():
+        season_total = 0
+        
+        for day_key, day_data in self._days.items():
             try:
-                month = datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m")
-                monthly[month]["days"] += 1
-                monthly[month]["persons"] += data["total_persons"]
-                monthly[month]["amount"] += data["amount"]
-            except (ValueError, KeyError):
+                date_obj = datetime.strptime(day_key, "%Y-%m-%d")
+                month_key = date_obj.strftime("%Y-%m")
+                monthly[month_key]["days"] += 1
+                monthly[month_key]["persons"] += day_data["total_persons"]
+                monthly[month_key]["amount"] += day_data["amount"]
+                
+                if self._is_in_season(date_obj):
+                    season_total += day_data["amount"]
+            except (ValueError, KeyError) as e:
+                _LOGGER.warning(f"Error processing day {day_key}: {str(e)}")
                 continue
 
         return {
             "price_per_person": self._config["price_per_person"],
-            "monthly": dict(sorted(monthly.items(), reverse=True)),
-            "next_update": self._unsub_time is not None
+            "season": "March-November",
+            "days_count": len(self._days),
+            "monthly_summary": dict(sorted(monthly.items(), reverse=True)),
+            "season_total": round(season_total, 2),
+            "data_file": self._data_file,
+            "last_day": next(iter(self._days.items())) if self._days else None
         }
 
+    def _is_in_season(self, date_obj):
+        """Check if date is within tourist season."""
+        return 3 <= date_obj.month <= 11
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up the sensor."""
+    """Reliable setup with service registration."""
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
     hass.data[DOMAIN] = sensor
 
     async def handle_reload(call):
-        await sensor.async_load_data()
-        sensor.async_write_ha_state()
+        """Service handler for manual reloads."""
+        await sensor._load_with_retry()
         _LOGGER.info("Manual reload completed")
 
     hass.services.async_register(DOMAIN, "reload_data", handle_reload)
-    hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
     
-    # Listen for time changes
-    async def time_updated(event):
+    async def handle_time_change(event):
         if event.data.get("entity_id") == "input_datetime.tourist_tax_update_time":
+            _LOGGER.debug("Detected time change, rescheduling")
             await sensor.async_schedule_update()
 
-    hass.bus.async_listen("state_changed", time_updated)
+    hass.bus.async_listen("state_changed", handle_time_change)
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
     
     return True
