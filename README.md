@@ -124,4 +124,5 @@ Anyone in the chosen zone is automatically included in the calculation
 
 ## Reload data
 
-Developer Tools - Actions - touristtaxes.reload_data 
+If you want to change the data in the JSON file just be careful and if you changed the file be sure to:<br>
+Developer Tools - Actions - touristtaxes.reload_data hit the button **Perform action**
