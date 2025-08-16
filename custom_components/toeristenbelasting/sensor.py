@@ -3,6 +3,7 @@ import os
 import logging
 from datetime import datetime
 from collections import defaultdict
+from functools import partial
 
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_time_change
@@ -10,32 +11,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-DATA_FILE = "/config/touristtaxes_data.json"  # Pas aan indien nodig
-
-async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Setup sensor en registreer reload + automatische herplanning."""
-    sensor = TouristTaxSensor(hass, config_entry)
-    await sensor.async_load_data()
-    async_add_entities([sensor])
-    hass.data[DOMAIN] = sensor
-
-    # Service om handmatig data te herladen
-    async def handle_reload(call):
-        await sensor.async_load_data()
-        sensor.async_write_ha_state()
-        _LOGGER.info("Handmatige herlading van touristtaxes data voltooid")
-
-    hass.services.async_register(DOMAIN, "reload_data", handle_reload)
-
-    # Eerste planning op basis van input_datetime
-    await sensor.async_schedule_update()
-
-    # Herplan automatisch bij wijziging van input_datetime
-    hass.bus.async_listen("state_changed", lambda event: hass.async_create_task(sensor.async_schedule_update()))
-
-    # Opslaan bij afsluiten
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
-    return True
+DATA_FILE = "/config/touristtaxes_data.json"
 
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
@@ -45,9 +21,16 @@ class TouristTaxSensor(Entity):
         self._days = {}
         self._unsub_time = None
         self._data_file = DATA_FILE
+        self._setup_complete = False
+
+    async def async_added_to_hass(self):
+        """Run when entity is added to HA."""
+        await self.async_load_data()
+        await self.async_schedule_update()
+        self._setup_complete = True
 
     async def async_load_data(self):
-        """Laad JSON-data en merge handmatige invoer."""
+        """Thread-safe data loading."""
         def _read_data():
             if os.path.exists(self._data_file):
                 with open(self._data_file, "r", encoding="utf-8") as f:
@@ -56,57 +39,28 @@ class TouristTaxSensor(Entity):
 
         try:
             data = await self.hass.async_add_executor_job(_read_data)
-            merged_days = {**data.get("days", {}), **self._days}
-            self._days = merged_days
-
-            self._state = round(sum(
-                day.get("amount", 0) for day in self._days.values()
-                if self._is_date_in_season(day.get("date", ""))
-            ), 2)
-
-            _LOGGER.debug(f"Data geladen: {len(self._days)} dagen, totaal €{self._state}")
+            self._days = data.get("days", {})
+            self._state = data.get("total", 0.0)
+            _LOGGER.info(f"Loaded {len(self._days)} days, total €{self._state}")
         except Exception as e:
-            _LOGGER.error(f"Fout bij laden van data: {e}")
+            _LOGGER.error(f"Error loading data: {e}")
 
-    async def async_save_data(self, event=None):
-        """Sla JSON-data veilig op."""
-        try:
-            data = {
-                "days": {k: v for k, v in self._days.items()
-                         if self._is_date_in_season(v.get("date", ""))},
-                "total": self._state,
-                "last_updated": datetime.now().isoformat()
-            }
-            await self.hass.async_add_executor_job(self._write_data_sync, data)
-            _LOGGER.debug(f"Data opgeslagen naar {self._data_file}")
-        except Exception as e:
-            _LOGGER.error(f"Opslaan mislukt: {e}")
-
-    def _write_data_sync(self, data):
-        temp_file = f"{self._data_file}.tmp"
-        with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(temp_file, self._data_file)
-
-    async def async_schedule_update(self):
-        """Plan dagelijkse update op tijd uit input_datetime."""
+    async def async_schedule_update(self, *args):
+        """Schedule or reschedule the daily update."""
         if self._unsub_time:
             self._unsub_time()
             self._unsub_time = None
 
         time_state = self.hass.states.get("input_datetime.tourist_tax_update_time")
         if not time_state:
-            _LOGGER.warning("Geen input_datetime.tourist_tax_update_time gevonden. Herprobeer over 30 sec.")
-            self.hass.loop.call_later(
-                30,
-                lambda: self.hass.async_create_task(self.async_schedule_update())
-            )
+            _LOGGER.warning("Time input not found, retrying in 30s")
+            self.hass.loop.call_later(30, self._reschedule)
             return
 
         try:
             hour = int(time_state.attributes.get("hour", 23))
             minute = int(time_state.attributes.get("minute", 0))
-
+            
             self._unsub_time = async_track_time_change(
                 self.hass,
                 self._update_daily,
@@ -114,61 +68,63 @@ class TouristTaxSensor(Entity):
                 minute=minute,
                 second=0
             )
-            _LOGGER.info(f"Dagelijkse update gepland om {hour:02d}:{minute:02d}")
+            _LOGGER.info(f"Scheduled daily update at {hour:02d}:{minute:02d}")
         except Exception as e:
-            _LOGGER.error(f"Fout bij plannen van update: {e}")
+            _LOGGER.error(f"Scheduling error: {e}")
+            self.hass.loop.call_later(30, self._reschedule)
+
+    def _reschedule(self):
+        """Helper to reschedule update."""
+        self.hass.async_create_task(self.async_schedule_update())
 
     async def _update_daily(self, now=None):
-        """Voer dagelijkse update uit op geplande tijd."""
+        """Execute the daily update."""
         try:
             now = now or datetime.now()
-            if now.month < 3 or now.month > 11:
-                _LOGGER.info("Buiten het toeristenseizoen (maart-november). Geen update uitgevoerd.")
+            if not (3 <= now.month <= 11):
+                _LOGGER.debug("Outside tourist season")
                 return
 
-            zone_id = self._config.get("home_zone", "zone.home").split(".", 1)[-1].lower()
-            persons = [
-                e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == zone_id
-            ]
-
+            zone = self._config.get("home_zone", "zone.home").split(".")[-1]
+            persons = [e for e in self.hass.states.async_entity_ids("person") 
+                      if self.hass.states.get(e).state.lower() == zone]
+            
             guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if (guests_state and guests_state.state not in ("unknown", "unavailable")) else 0
+            guests = int(float(guests_state.state)) if guests_state else 0
 
-            total_persons = len(persons) + guests
-            day_key = now.strftime("%Y-%m-%d")
-            date_display = now.strftime("%A %d %B %Y")
-
-            self._days[day_key] = {
-                "date": date_display,
+            day_data = {
+                "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
                 "guests": guests,
-                "total_persons": total_persons,
-                "amount": round(total_persons * self._config["price_per_person"], 2)
+                "total_persons": len(persons) + guests,
+                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
             }
 
-            self._state = round(sum(
-                day["amount"] for day in self._days.values()
-                if self._is_date_in_season(day["date"])
-            ), 2)
-
+            self._days[now.strftime("%Y-%m-%d")] = day_data
+            self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+            
             self.async_write_ha_state()
             await self.async_save_data()
-
-            _LOGGER.info(
-                f"Update voor {date_display}: {len(persons)} personen + {guests} gasten = "
-                f"{total_persons} × €{self._config['price_per_person']} = €{self._days[day_key]['amount']}"
-            )
+            _LOGGER.info(f"Updated: {day_data}")
         except Exception as e:
-            _LOGGER.error(f"Dagelijkse update mislukt: {e}")
+            _LOGGER.error(f"Update failed: {e}")
 
-    def _is_date_in_season(self, date_str):
-        """Controleer of datum in seizoen (maart-november) valt."""
+    async def async_save_data(self, event=None):
+        """Thread-safe data saving."""
+        def _write():
+            temp_file = f"{self._data_file}.tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "days": self._days,
+                    "total": self._state,
+                    "last_updated": datetime.now().isoformat()
+                }, f, indent=2)
+            os.replace(temp_file, self._data_file)
+
         try:
-            date = datetime.strptime(date_str, "%A %d %B %Y")
-            return 3 <= date.month <= 11
-        except ValueError:
-            return True
+            await self.hass.async_add_executor_job(_write)
+        except Exception as e:
+            _LOGGER.error(f"Save failed: {e}")
 
     @property
     def name(self):
@@ -180,33 +136,41 @@ class TouristTaxSensor(Entity):
 
     @property
     def extra_state_attributes(self):
-        monthly_data = defaultdict(lambda: {"days": 0, "persons": 0, "amount": 0.0})
-
-        for day_key, day_data in self._days.items():
+        monthly = defaultdict(lambda: {"days": 0, "persons": 0, "amount": 0.0})
+        for date_str, data in self._days.items():
             try:
-                date_obj = datetime.strptime(day_key, "%Y-%m-%d")
-                month_key = date_obj.strftime("%Y-%m")
-                monthly_data[month_key]["days"] += 1
-                monthly_data[month_key]["persons"] += day_data["total_persons"]
-                monthly_data[month_key]["amount"] += day_data["amount"]
+                month = datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m")
+                monthly[month]["days"] += 1
+                monthly[month]["persons"] += data["total_persons"]
+                monthly[month]["amount"] += data["amount"]
             except (ValueError, KeyError):
                 continue
 
         return {
             "price_per_person": self._config["price_per_person"],
-            "season": "March-November",
-            "days": dict(sorted(self._days.items(), reverse=True)),
-            "monthly": dict(sorted(monthly_data.items(), reverse=True)),
-            "total_days": len(self._days),
-            "next_update_scheduled": self._unsub_time is not None,
-            "version": "2024.08.1",
-            "data_file": self._data_file,
+            "monthly": dict(sorted(monthly.items(), reverse=True)),
+            "next_update": self._unsub_time is not None
         }
 
-    async def reset_data(self):
-        """Reset alle data."""
-        self._days = {}
-        self._state = 0.0
-        self.async_write_ha_state()
-        await self.async_save_data()
-        _LOGGER.warning("Alle tourist tax data is gereset!")
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    """Set up the sensor."""
+    sensor = TouristTaxSensor(hass, config_entry)
+    async_add_entities([sensor])
+    hass.data[DOMAIN] = sensor
+
+    async def handle_reload(call):
+        await sensor.async_load_data()
+        sensor.async_write_ha_state()
+        _LOGGER.info("Manual reload completed")
+
+    hass.services.async_register(DOMAIN, "reload_data", handle_reload)
+    hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
+    
+    # Listen for time changes
+    async def time_updated(event):
+        if event.data.get("entity_id") == "input_datetime.tourist_tax_update_time":
+            await sensor.async_schedule_update()
+
+    hass.bus.async_listen("state_changed", time_updated)
+    
+    return True
