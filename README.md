@@ -46,27 +46,29 @@ Please use responsibly.
 ### Install using HACS:
 
 1. Go to **HACS** → **Custom Integrations**
-2. Click the **+** icon
+2. Click the **3 dots** in the upper right corner
 3. Search for `Touristtaxes`
-4. Click **Install**
+4. Click **Custom Repositories**
 5. Restart Home Assistant
 
 ## ⚙️ Configuration
 
 Add the following to your `configuration.yaml` file:
-
+```yaml
 input_number:!include_dir_merge_named touristtaxes/input_number_touristtaxes<br>
 input_datetime:!include_dir_merge_named touristtaxes/input_datetime_touristtaxes
-
+```
 ## Create two directories:
-
+```yaml
 /config/touristtaxes/input_number_touristtaxes<br>
 /config/touristtaxes/input_datetime_touristtaxes
-
+```
 ## Create 2 New File:
+```yaml
 /config/touristtaxes/input_number_touristtaxes/tourist_guests.yaml
 
-```yaml
+and use this code:
+
 tourist_guests:
   name: "Aantal logés"
   min: 0
@@ -76,9 +78,11 @@ tourist_guests:
   icon: mdi:account-group
 ```
 
+```yaml
 /config/touristtaxes/input_datetime_touristtaxes/tourist_tax_update_time.yaml
 
-```yaml
+and use this code:
+
 tourist_tax_update_time:
   name: "Toeristenbelasting Update Tijd"
   has_date: false
