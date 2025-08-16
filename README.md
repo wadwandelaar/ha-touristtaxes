@@ -17,6 +17,9 @@
   - [📦 Installation](#-installation)
     - [Install using HACS:](#install-using-hacs)
   - [⚙️ Configuration](#️-configuration)
+  - [Create two directories:](#create-two-directories)
+  - [Create New File:](#create-new-file)
+  - [Create New File:](#create-new-file-1)
   - [🧼 Reset Button Example](#-reset-button-example)
 
 ---
@@ -39,8 +42,6 @@ Please use responsibly.
 
 ## 📦 Installation
 
-You can install this integration in two ways:
-
 ### Install using HACS:
 
 1. Go to **HACS** → **Custom Integrations**
@@ -53,17 +54,16 @@ You can install this integration in two ways:
 
 Add the following to your `configuration.yaml` file:
 
-```yaml
+input_number:!include_dir_merge_named touristtaxes/input_number_touristtaxes
+input_datetime:!include_dir_merge_named touristtaxes/input_datetime_touristtaxes
 
-input_number: !include_dir_merge_named touristtaxes/input_number_touristtaxes`input_datetime: !include_dir_merge_named touristtaxes/input_datetime_touristtaxes
-
-Create two directories:
+## Create two directories:
 
 /config/touristtaxes/input_number_touristtaxes
 /config/touristtaxes/input_datetime_touristtaxes
 
-Add a Yaml file in:
-`/config/touristtaxes/input_number_touristtaxes/tourist_guests.yaml`
+## Create New File:
+/config/touristtaxes/input_number_touristtaxes/tourist_guests.yaml
 
 ```yaml
 tourist_guests:
@@ -73,8 +73,8 @@ tourist_guests:
   step: 1
   mode: box
   icon: mdi:account-group
-
-Add a Yaml file in:
+```
+## Create New File:
 /config/touristtaxes/input_datetime_touristtaxes/tourist_tax_update_time.yaml
 
 ```yaml
@@ -84,6 +84,7 @@ tourist_tax_update_time:
   has_time: true
   initial: "23:00"
   icon: mdi:clock-outline
+```
 
 ## 🧼 Reset Button Example
 
@@ -101,3 +102,4 @@ icon: mdi:delete
 grid_options:
   columns: 12
   rows: 2
+```
