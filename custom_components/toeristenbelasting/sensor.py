@@ -103,15 +103,15 @@ class TouristTaxSensor(Entity):
                 if self.hass.states.get(e).state.lower() == target_zone
             ]
 
-            # Skip update if no persons are in the camping zone
-            if not persons:
-                _LOGGER.debug(f"No persons found in {target_zone} zone, skipping update")
+            # Skip update if no persons are in the camping zone and no data exists for today
+            day_key = now.strftime("%Y-%m-%d")
+            if not persons and day_key not in self._days:
+                _LOGGER.debug(f"No persons found in {target_zone} zone and no data for {day_key}, skipping update")
                 return
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
-            day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
@@ -120,6 +120,7 @@ class TouristTaxSensor(Entity):
                 "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
             }
 
+            # Update the day's data and total amount
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
