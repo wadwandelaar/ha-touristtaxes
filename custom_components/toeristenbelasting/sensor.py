@@ -96,6 +96,12 @@ class TouristTaxSensor(Entity):
                 return
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
+            
+            # Skip update if not in camping zone
+            if zone != "camping":
+                _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
+                return
+
             persons = [
                 e for e in self.hass.states.async_entity_ids("person")
                 if self.hass.states.get(e).state.lower() == zone
@@ -182,7 +188,7 @@ class TouristTaxSensor(Entity):
             "season_total": round(season_total, 2),
             "data_file": self._data_file,
             "last_day": next(iter(self._days.items())) if self._days else None,
-            "days": self._days  # ✅ Belangrijk voor je Markdown-kaart
+            "days": self._days
         }
 
     def _is_in_season(self, date_obj):
