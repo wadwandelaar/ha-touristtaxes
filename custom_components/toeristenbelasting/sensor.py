@@ -97,30 +97,34 @@ class TouristTaxSensor(Entity):
 
             target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
             
-            # Get all persons in target zone
-            persons = [
+            # Only proceed if we're actually in camping zone
+            if target_zone != "camping":
+                _LOGGER.debug(f"Skipping update, current zone is {target_zone} (not camping)")
+                return
+
+            # Get all persons actually in camping zone
+            persons_in_camping = [
                 e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == target_zone
+                if self.hass.states.get(e).state.lower() == "camping"
             ]
 
-            # **Strikte check**: Stop als er geen personen zijn in de zone en geen eerdere data is voor de dag
-            day_key = now.strftime("%Y-%m-%d")
-            if not persons:  # Als er niemand in de zone is, stoppen
-                _LOGGER.debug(f"No persons found in {target_zone} zone, skipping update")
+            # Skip if nobody is in camping
+            if not persons_in_camping:
+                _LOGGER.debug("No persons found in camping zone, skipping update")
                 return
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
+            day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
-                "persons_in_zone": len(persons),
+                "persons_in_zone": len(persons_in_camping),
                 "guests": guests,
-                "total_persons": len(persons) + guests,
-                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
+                "total_persons": len(persons_in_camping) + guests,
+                "amount": round((len(persons_in_camping) + guests) * self._config["price_per_person"], 2)
             }
 
-            # Werk de gegevens bij als er daadwerkelijk mensen in de zone zijn
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
@@ -128,7 +132,7 @@ class TouristTaxSensor(Entity):
             await self.async_save_data()
 
             _LOGGER.info(
-                f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
+                f"Updated {day_key}: Residents: {len(persons_in_camping)}, Guests: {guests}, "
                 f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
             )
         except Exception as e:
