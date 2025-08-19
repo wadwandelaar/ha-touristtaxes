@@ -117,7 +117,7 @@ class TouristTaxSensor(Entity):
 
             if not persons_in_zone:
                 _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
-                return
+                return  # <<<< BELANGRIJK: STOP HIER
 
             # Aantal gasten ophalen
             guests_state = self.hass.states.get("input_number.tourist_guests")
@@ -127,7 +127,7 @@ class TouristTaxSensor(Entity):
             total = persons_count + guests
             if total == 0:
                 _LOGGER.debug(f"No persons or guests to record for {day_key}")
-                return
+                return  # <<<< STOP HIER OOK NOG EEN KEER
 
             amount = round(total * self._config["price_per_person"], 2)
 
@@ -147,6 +147,7 @@ class TouristTaxSensor(Entity):
 
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
+
 
     async def async_save_data(self, event=None):
         def _write_data():
