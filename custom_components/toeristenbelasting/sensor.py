@@ -88,55 +88,53 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Scheduling failed: {str(e)}")
             self.hass.loop.call_later(30, lambda: self.hass.async_create_task(self.async_schedule_update()))
 
-    async def _perform_daily_update(self, now=None):
-        try:
-            now = now or datetime.now()
-            if not (3 <= now.month <= 11):
-                _LOGGER.debug("Skipping update outside tourist season")
-                return
+        async def _perform_daily_update(self, now=None):
+            try:
+                now = now or datetime.now()
+                if not (3 <= now.month <= 11):
+                    _LOGGER.debug("Skipping update outside tourist season")
+                    return
 
-            target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
-            
-            # Only proceed if we're actually in camping zone
-            if target_zone != "camping":
-                _LOGGER.debug(f"Skipping update, current zone is {target_zone} (not camping)")
-                return
+                target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
+                day_key = now.strftime("%Y-%m-%d")
+                
+                # Get actual current zone of persons (not just target zone)
+                persons_in_camping = [
+                    e for e in self.hass.states.async_entity_ids("person")
+                    if self.hass.states.get(e).state.lower() == "camping"
+                ]
 
-            # Get all persons actually in camping zone
-            persons_in_camping = [
-                e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == "camping"
-            ]
+                # Only proceed if we have persons actually in camping zone
+                if not persons_in_camping:
+                    _LOGGER.debug(f"No persons in camping zone, skipping update for {day_key}")
+                    return
 
-            # Skip if nobody is in camping
-            if not persons_in_camping:
-                _LOGGER.debug("No persons found in camping zone, skipping update")
-                return
+                guests_state = self.hass.states.get("input_number.tourist_guests")
+                guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
-            guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+                day_data = {
+                    "date": now.strftime("%A %d %B %Y"),
+                    "persons_in_zone": len(persons_in_camping),
+                    "guests": guests,
+                    "total_persons": len(persons_in_camping) + guests,
+                    "amount": round((len(persons_in_camping) + guests) * self._config["price_per_person"], 2)
+                }
 
-            day_key = now.strftime("%Y-%m-%d")
-            day_data = {
-                "date": now.strftime("%A %d %B %Y"),
-                "persons_in_zone": len(persons_in_camping),
-                "guests": guests,
-                "total_persons": len(persons_in_camping) + guests,
-                "amount": round((len(persons_in_camping) + guests) * self._config["price_per_person"], 2)
-            }
+                # Only update if we have actual camping presence
+                if day_data["total_persons"] > 0:
+                    self._days[day_key] = day_data
+                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+                    self.async_write_ha_state()
+                    await self.async_save_data()
+                    _LOGGER.info(
+                        f"Updated {day_key}: Residents: {len(persons_in_camping)}, Guests: {guests}, "
+                        f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+                    )
+                else:
+                    _LOGGER.debug(f"No persons or guests in camping, skipping save for {day_key}")
 
-            self._days[day_key] = day_data
-            self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-
-            self.async_write_ha_state()
-            await self.async_save_data()
-
-            _LOGGER.info(
-                f"Updated {day_key}: Residents: {len(persons_in_camping)}, Guests: {guests}, "
-                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
-            )
-        except Exception as e:
-            _LOGGER.error(f"Daily update failed: {str(e)}")
+            except Exception as e:
+                _LOGGER.error(f"Daily update failed: {str(e)}")
 
     async def async_save_data(self, event=None):
         def _write_data():
