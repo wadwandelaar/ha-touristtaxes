@@ -1,3 +1,4 @@
+"""Sensor platform for Tourist Taxes."""
 import json
 import os
 import logging
@@ -22,11 +23,37 @@ class TouristTaxSensor(Entity):
         self._unsub_time = None
         self._data_file = DATA_FILE
         self._load_attempted = False
+        self._entry_id = config_entry.entry_id
+
+    @property
+    def unique_id(self):
+        """Return a unique ID for this sensor."""
+        return f"tourist_taxes_{self._entry_id}"
 
     async def async_added_to_hass(self):
         """Initialize when entity is added to HA."""
         await self._load_with_retry()
         await self.async_schedule_update()
+
+        # Register service handlers
+        async def handle_force_update(call):
+            await self._perform_daily_update(datetime.now())
+            _LOGGER.info("Manual update triggered via service")
+
+        async def handle_reset_data(call):
+            await self.reset_data()
+            _LOGGER.info("Data reset triggered via service")
+
+        self.hass.services.async_register(DOMAIN, "force_update", handle_force_update)
+        self.hass.services.async_register(DOMAIN, "reset_data", handle_reset_data)
+
+    async def reset_data(self):
+        """Reset all data."""
+        self._days = {}
+        self._state = 0.0
+        self.async_write_ha_state()
+        await self.async_save_data()
+        _LOGGER.info("All data has been reset")
 
     async def _load_with_retry(self, retries=3):
         """Attempt loading data with retries."""
@@ -91,7 +118,7 @@ class TouristTaxSensor(Entity):
             
             self._unsub_time = async_track_time_change(
                 self.hass,
-                self._perform_daily_update,  # Renamed for clarity
+                self._perform_daily_update,
                 hour=hour,
                 minute=minute,
                 second=0
@@ -175,6 +202,14 @@ class TouristTaxSensor(Entity):
         return self._state
 
     @property
+    def unit_of_measurement(self):
+        return "€"
+
+    @property
+    def icon(self):
+        return "mdi:cash"
+
+    @property
     def extra_state_attributes(self):
         """Enhanced attributes with verification data."""
         monthly = defaultdict(lambda: {"days": 0, "persons": 0, "amount": 0.0})
@@ -209,10 +244,12 @@ class TouristTaxSensor(Entity):
         return 3 <= date_obj.month <= 11
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Reliable setup with service registration."""
+    """Set up the sensor platform."""
     sensor = TouristTaxSensor(hass, config_entry)
     async_add_entities([sensor])
-    hass.data[DOMAIN] = sensor
+    
+    # Store sensor reference in hass data
+    hass.data.setdefault(DOMAIN, {})[config_entry.entry_id] = sensor
 
     async def handle_reload(call):
         """Service handler for manual reloads."""
