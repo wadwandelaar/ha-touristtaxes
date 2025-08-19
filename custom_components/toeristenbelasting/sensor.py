@@ -103,10 +103,10 @@ class TouristTaxSensor(Entity):
                 if self.hass.states.get(e).state.lower() == target_zone
             ]
 
-            # Skip update if no persons are in the camping zone and no data exists for today
+            # **Strikte check**: Stop als er geen personen zijn in de zone en geen eerdere data is voor de dag
             day_key = now.strftime("%Y-%m-%d")
-            if not persons and day_key not in self._days:
-                _LOGGER.debug(f"No persons found in {target_zone} zone and no data for {day_key}, skipping update")
+            if not persons:  # Als er niemand in de zone is, stoppen
+                _LOGGER.debug(f"No persons found in {target_zone} zone, skipping update")
                 return
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
@@ -120,7 +120,7 @@ class TouristTaxSensor(Entity):
                 "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
             }
 
-            # Update the day's data and total amount
+            # Werk de gegevens bij als er daadwerkelijk mensen in de zone zijn
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
