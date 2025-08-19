@@ -99,22 +99,28 @@ class TouristTaxSensor(Entity):
                 _LOGGER.debug("Outside tourist season, skipping update")
                 return
 
+            # Doelzone bepalen (zone.camping)
             target_zone = "zone.camping"
+            _LOGGER.debug(f"Target zone: {target_zone}")
+
+            # Bekijk waar alle personen zich bevinden
             persons_in_zone = [
                 e for e in self.hass.states.async_entity_ids("person")
                 if self.hass.states.get(e) is not None and self.hass.states.get(e).state.lower() == target_zone.lower()
             ]
-            _LOGGER.debug(f"Persons in zone '{target_zone}': {persons_in_zone}")
 
+            _LOGGER.debug(f"Persons in target zone ('{target_zone}'): {persons_in_zone}")
+
+            # Aantal gasten ophalen
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
-            _LOGGER.debug(f"Number of guests: {guests}")
 
             persons_count = len(persons_in_zone)
             total = persons_count + guests
 
             if total == 0:
                 _LOGGER.debug(f"No persons or guests present for {day_key}, skipping data write")
+                # Verwijder dag als die bestaat
                 if day_key in self._days:
                     del self._days[day_key]
                     await self.async_save_data()
@@ -134,6 +140,7 @@ class TouristTaxSensor(Entity):
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
             await self.async_save_data()
+
             _LOGGER.info(f"Tourist tax recorded for {day_key}: {day_data}")
 
         except Exception as e:
@@ -141,24 +148,17 @@ class TouristTaxSensor(Entity):
 
     async def async_save_data(self, event=None):
         if not self._days:
-            _LOGGER.debug("No data to save: days dictionary is empty")
-            if os.path.exists(self._data_file):
-                try:
-                    os.remove(self._data_file)
-                    _LOGGER.info(f"Removed data file {self._data_file} because data is empty")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to remove empty data file: {str(e)}")
+            _LOGGER.debug("No data to save. The 'days' dictionary is empty.")
             return
 
-        has_valid_data = any(day_data.get("total_persons", 0) > 0 for day_data in self._days.values())
-        if not has_valid_data:
-            _LOGGER.debug("No valid data to save: all days have zero persons")
-            if os.path.exists(self._data_file):
-                try:
-                    os.remove(self._data_file)
-                    _LOGGER.info(f"Removed data file {self._data_file} because all entries zero")
-                except Exception as e:
-                    _LOGGER.error(f"Failed to remove empty data file: {str(e)}")
+        empty_data = True
+        for day_key, day_data in self._days.items():
+            if day_data["total_persons"] > 0:
+                empty_data = False
+                break
+
+        if empty_data:
+            _LOGGER.debug("No valid data to save. All days have 0 persons.")
             return
 
         def _write_data():
