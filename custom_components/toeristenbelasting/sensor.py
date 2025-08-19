@@ -113,7 +113,7 @@ class TouristTaxSensor(Entity):
 
             if not persons_in_zone:
                 _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
-                return  # STOP HIER als er niemand in de zone is
+                return  # Geen schrijfactie als niemand in de zone is
 
             # Aantal gasten ophalen
             guests_state = self.hass.states.get("input_number.tourist_guests")
@@ -123,7 +123,7 @@ class TouristTaxSensor(Entity):
             total = persons_count + guests
             if total == 0:
                 _LOGGER.debug(f"No persons or guests to record for {day_key}")
-                return  # STOP HIER OOK OMDAT ER GEEN PERSONEN OF GASTEN ZIJN
+                return  # Stop ook als er geen personen of gasten zijn
 
             amount = round(total * self._config["price_per_person"], 2)
 
@@ -137,6 +137,8 @@ class TouristTaxSensor(Entity):
 
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+
+            # Alleen opslaan als er een verandering is in de gegevens
             await self.async_save_data()
 
             _LOGGER.info(f"Tourist tax recorded for {day_key}: {day_data}")
