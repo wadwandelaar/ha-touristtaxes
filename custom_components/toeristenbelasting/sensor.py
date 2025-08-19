@@ -101,19 +101,15 @@ class TouristTaxSensor(Entity):
 
             # Doelzone bepalen (zone.camping)
             target_zone = "zone.camping"
+            _LOGGER.debug(f"Target zone: {target_zone}")
 
             # Bekijk waar alle personen zich bevinden
-            persons = {
-                e: self.hass.states.get(e).state.lower()
-                for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e) is not None
-            }
-
-            # Filter op personen in zone.camping
             persons_in_zone = [
-                e for e, state in persons.items()
-                if state == target_zone
+                e for e in self.hass.states.async_entity_ids("person")
+                if self.hass.states.get(e) is not None and self.hass.states.get(e).state.lower() == target_zone.lower()
             ]
+
+            _LOGGER.debug(f"Persons in target zone ('{target_zone}'): {persons_in_zone}")
 
             if not persons_in_zone:
                 _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
@@ -147,7 +143,6 @@ class TouristTaxSensor(Entity):
 
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
-
 
     async def async_save_data(self, event=None):
         def _write_data():
