@@ -111,9 +111,10 @@ class TouristTaxSensor(Entity):
 
             _LOGGER.debug(f"Persons in target zone ('{target_zone}'): {persons_in_zone}")
 
+            # Als er niemand in de zone is, geen gegevens wegschrijven
             if not persons_in_zone:
                 _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
-                return  # Geen schrijfactie als niemand in de zone is
+                return
 
             # Aantal gasten ophalen
             guests_state = self.hass.states.get("input_number.tourist_guests")
@@ -123,7 +124,7 @@ class TouristTaxSensor(Entity):
             total = persons_count + guests
             if total == 0:
                 _LOGGER.debug(f"No persons or guests to record for {day_key}")
-                return  # Stop ook als er geen personen of gasten zijn
+                return  # Geen gegevens om weg te schrijven
 
             amount = round(total * self._config["price_per_person"], 2)
 
@@ -138,7 +139,7 @@ class TouristTaxSensor(Entity):
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
-            # Alleen opslaan als er een verandering is in de gegevens
+            # Alleen opslaan als er iets is om op te slaan
             await self.async_save_data()
 
             _LOGGER.info(f"Tourist tax recorded for {day_key}: {day_data}")
@@ -147,6 +148,10 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
 
     async def async_save_data(self, event=None):
+        if not self._days or all(day["total_persons"] == 0 for day in self._days.values()):
+            _LOGGER.debug("No data to save, skipping write to JSON")
+            return  # Geen gegevens om weg te schrijven
+
         def _write_data():
             temp_file = f"{self._data_file}.tmp"
             try:
@@ -206,25 +211,3 @@ class TouristTaxSensor(Entity):
 
     def _is_in_season(self, date_obj):
         return 3 <= date_obj.month <= 11
-
-
-async def async_setup_entry(hass, config_entry, async_add_entities):
-    sensor = TouristTaxSensor(hass, config_entry)
-    async_add_entities([sensor])
-    hass.data[DOMAIN] = sensor
-
-    async def handle_reload(call):
-        await sensor._load_with_retry()
-        _LOGGER.info("Manual reload completed")
-
-    hass.services.async_register(DOMAIN, "reload_data", handle_reload)
-
-    async def handle_time_change(event):
-        if event.data.get("entity_id") == "input_datetime.tourist_tax_update_time":
-            _LOGGER.debug("Detected time change, rescheduling")
-            await sensor.async_schedule_update()
-
-    hass.bus.async_listen("state_changed", handle_time_change)
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, sensor.async_save_data)
-
-    return True
