@@ -12,6 +12,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 DATA_FILE = "/config/touristtaxes_data.json"
 
+
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
         self.hass = hass
@@ -49,7 +50,7 @@ class TouristTaxSensor(Entity):
             with open(self._data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
-                raise ValueError("Invalid data format: not a dictionary")
+                raise ValueError("Invalid data format")
             if "days" not in data or "total" not in data:
                 raise ValueError("Missing required fields in JSON")
             return data
@@ -57,8 +58,7 @@ class TouristTaxSensor(Entity):
         data = await self.hass.async_add_executor_job(_read_and_validate)
         self._days = data.get("days", {})
         self._state = round(sum(
-            day.get("amount", 0) 
-            for day in self._days.values()
+            day.get("amount", 0) for day in self._days.values()
         ), 2)
         _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
 
@@ -88,53 +88,65 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Scheduling failed: {str(e)}")
             self.hass.loop.call_later(30, lambda: self.hass.async_create_task(self.async_schedule_update()))
 
-        async def _perform_daily_update(self, now=None):
-            try:
-                now = now or datetime.now()
-                if not (3 <= now.month <= 11):
-                    _LOGGER.debug("Skipping update outside tourist season")
-                    return
+    async def _perform_daily_update(self, now=None):
+        try:
+            now = now or datetime.now()
+            day_key = now.strftime("%Y-%m-%d")
+            _LOGGER.debug(f"Running tourist tax update for {day_key}")
 
-                target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
-                day_key = now.strftime("%Y-%m-%d")
-                
-                # Get actual current zone of persons (not just target zone)
-                persons_in_camping = [
-                    e for e in self.hass.states.async_entity_ids("person")
-                    if self.hass.states.get(e).state.lower() == "camping"
-                ]
+            # Alleen bijhouden van maart t/m november
+            if not (3 <= now.month <= 11):
+                _LOGGER.debug("Outside tourist season, skipping update")
+                return
 
-                # Only proceed if we have persons actually in camping zone
-                if not persons_in_camping:
-                    _LOGGER.debug(f"No persons in camping zone, skipping update for {day_key}")
-                    return
+            # Doelzone bepalen
+            target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
 
-                guests_state = self.hass.states.get("input_number.tourist_guests")
-                guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+            # Bekijk waar alle personen zich bevinden
+            persons = {
+                e: self.hass.states.get(e).state.lower()
+                for e in self.hass.states.async_entity_ids("person")
+                if self.hass.states.get(e) is not None
+            }
 
-                day_data = {
-                    "date": now.strftime("%A %d %B %Y"),
-                    "persons_in_zone": len(persons_in_camping),
-                    "guests": guests,
-                    "total_persons": len(persons_in_camping) + guests,
-                    "amount": round((len(persons_in_camping) + guests) * self._config["price_per_person"], 2)
-                }
+            # Filter op personen in zone.camping
+            persons_in_zone = [
+                e for e, state in persons.items()
+                if state == target_zone
+            ]
 
-                # Only update if we have actual camping presence
-                if day_data["total_persons"] > 0:
-                    self._days[day_key] = day_data
-                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-                    self.async_write_ha_state()
-                    await self.async_save_data()
-                    _LOGGER.info(
-                        f"Updated {day_key}: Residents: {len(persons_in_camping)}, Guests: {guests}, "
-                        f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
-                    )
-                else:
-                    _LOGGER.debug(f"No persons or guests in camping, skipping save for {day_key}")
+            if not persons_in_zone:
+                _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
+                return
 
-            except Exception as e:
-                _LOGGER.error(f"Daily update failed: {str(e)}")
+            # Aantal gasten ophalen
+            guests_state = self.hass.states.get("input_number.tourist_guests")
+            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+
+            persons_count = len(persons_in_zone)
+            total = persons_count + guests
+            if total == 0:
+                _LOGGER.debug(f"No persons or guests to record for {day_key}")
+                return
+
+            amount = round(total * self._config["price_per_person"], 2)
+
+            day_data = {
+                "date": now.strftime("%A %d %B %Y"),
+                "persons_in_zone": persons_count,
+                "guests": guests,
+                "total_persons": total,
+                "amount": amount
+            }
+
+            self._days[day_key] = day_data
+            self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+            await self.async_save_data()
+
+            _LOGGER.info(f"Tourist tax recorded for {day_key}: {day_data}")
+
+        except Exception as e:
+            _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
 
     async def async_save_data(self, event=None):
         def _write_data():
@@ -180,9 +192,8 @@ class TouristTaxSensor(Entity):
                 monthly[month_key]["amount"] += day_data["amount"]
                 if self._is_in_season(date_obj):
                     season_total += day_data["amount"]
-            except (ValueError, KeyError) as e:
+            except Exception as e:
                 _LOGGER.warning(f"Error processing day {day_key}: {str(e)}")
-                continue
 
         return {
             "price_per_person": self._config["price_per_person"],
@@ -197,6 +208,7 @@ class TouristTaxSensor(Entity):
 
     def _is_in_season(self, date_obj):
         return 3 <= date_obj.month <= 11
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     sensor = TouristTaxSensor(hass, config_entry)
