@@ -95,17 +95,18 @@ class TouristTaxSensor(Entity):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
 
-            zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
+            target_zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
             
-            # Skip update if not in camping zone
-            if zone != "camping":
-                _LOGGER.debug(f"Skipping update, not in other zone (current zone: {zone})")
-                return
-
+            # Get all persons in target zone
             persons = [
                 e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == zone
+                if self.hass.states.get(e).state.lower() == target_zone
             ]
+
+            # Skip update if no persons are in the camping zone
+            if not persons:
+                _LOGGER.debug(f"No persons found in {target_zone} zone, skipping update")
+                return
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
