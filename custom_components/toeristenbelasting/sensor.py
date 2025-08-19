@@ -148,10 +148,23 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
 
     async def async_save_data(self, event=None):
-        if not self._days or all(day["total_persons"] == 0 for day in self._days.values()):
-            _LOGGER.debug("No data to save, skipping write to JSON")
-            return  # Geen gegevens om weg te schrijven
+        # Controleer of de data leeg is of geen wijzigingen heeft
+        if not self._days:
+            _LOGGER.debug("No data to save. The 'days' dictionary is empty.")
+            return  # Geen dagen om op te slaan
 
+        # Controleer of alle dagen 0 personen en gasten hebben
+        empty_data = True
+        for day_key, day_data in self._days.items():
+            if day_data["total_persons"] > 0:
+                empty_data = False
+                break
+
+        if empty_data:
+            _LOGGER.debug("No valid data to save. All days have 0 persons.")
+            return  # Geen geldige gegevens om op te slaan
+
+        # Gegevens wegschrijven naar de JSON als er echte gegevens zijn
         def _write_data():
             temp_file = f"{self._data_file}.tmp"
             try:
