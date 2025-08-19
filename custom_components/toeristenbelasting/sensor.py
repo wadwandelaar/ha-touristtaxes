@@ -12,7 +12,6 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 DATA_FILE = "/config/touristtaxes_data.json"
 
-
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
         self.hass = hass
@@ -92,7 +91,7 @@ class TouristTaxSensor(Entity):
         try:
             now = now or datetime.now()
             day_key = now.strftime("%Y-%m-%d")
-            _LOGGER.debug(f"Running tourist tax update for {day_key}")
+            _LOGGER.debug(f"Running update for {day_key}")
 
             # Alleen bijhouden van maart t/m november
             if not (3 <= now.month <= 11):
@@ -114,6 +113,9 @@ class TouristTaxSensor(Entity):
                 e for e, state in persons.items()
                 if state == target_zone
             ]
+
+            # Debug: print personen en hun zones
+            _LOGGER.debug(f"Persons in zone list: {persons_in_zone}, guests: {guests}, zone target: {target_zone}")
 
             if not persons_in_zone:
                 _LOGGER.debug(f"No one in zone '{target_zone}', skipping JSON write for {day_key}")
@@ -147,7 +149,6 @@ class TouristTaxSensor(Entity):
 
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}", exc_info=True)
-
 
     async def async_save_data(self, event=None):
         def _write_data():
@@ -209,7 +210,6 @@ class TouristTaxSensor(Entity):
 
     def _is_in_season(self, date_obj):
         return 3 <= date_obj.month <= 11
-
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     sensor = TouristTaxSensor(hass, config_entry)
