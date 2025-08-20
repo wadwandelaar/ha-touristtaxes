@@ -66,21 +66,22 @@ class TouristTaxSensor(Entity):
 
     def _should_update(self, zone_entity_id):
         """Check if we should update based on zone and person states."""
-        # Only update if the target zone is in our allowed list
-        if zone_entity_id not in ALLOWED_ZONES:
-            _LOGGER.info(f"🛑 Zone {zone_entity_id} is not in allowed list: {ALLOWED_ZONES}")
+        # Alleen updaten als de target zone zone.camping is
+        if zone_entity_id != "zone.camping":
+            _LOGGER.info(f"🛑 Zone {zone_entity_id} is not zone.camping")
             return False
         
-        # Check if any person is in the allowed zone
+        # Check if any person is in zone.camping
+        persons_in_camping = 0
         for entity_id in self.hass.states.async_entity_ids("person"):
             person_state = self.hass.states.get(entity_id)
             if not person_state:
                 continue
                 
             person_zone = person_state.attributes.get('zone')
-            if person_zone in ALLOWED_ZONES:
-                _LOGGER.info(f"✅ Person {entity_id} is in allowed zone: {person_zone}")
-                return True
+            if person_zone == "zone.camping":
+                persons_in_camping += 1
+                _LOGGER.info(f"✅ Person {entity_id} is in zone.camping")
         
         # Check guests
         guests_state = self.hass.states.get("input_number.tourist_guests")
@@ -90,11 +91,15 @@ class TouristTaxSensor(Entity):
                 guests = int(float(guests_state.state))
                 if guests > 0:
                     _LOGGER.info(f"✅ Guests present: {guests}")
-                    return True
             except (ValueError, TypeError):
                 pass
         
-        _LOGGER.info("🛑 No persons in allowed zones and no guests")
+        # Alleen updaten als er personen in camping zijn OF gasten
+        if persons_in_camping > 0 or guests > 0:
+            _LOGGER.info(f"✅ Update allowed: {persons_in_camping} persons in camping, {guests} guests")
+            return True
+        
+        _LOGGER.info("🛑 No persons in zone.camping and no guests - update blocked")
         return False
 
     async def reset_data(self):
