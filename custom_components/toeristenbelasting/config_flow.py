@@ -10,7 +10,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required("price_per_person", default=DEFAULT_PRICE): float,
-                vol.Required("home_zone", default="zone.camping"): str
+                vol.Required("price_per_person", default=DEFAULT_PRICE): float
             })
         )

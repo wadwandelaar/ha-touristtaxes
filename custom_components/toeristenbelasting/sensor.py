@@ -90,7 +90,7 @@ class TouristTaxSensor(Entity):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
 
-            zone_name = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
+            zone_name = "camping"
 
             persons_in_zone = [
                 e for e in self.hass.states.async_entity_ids("person")
