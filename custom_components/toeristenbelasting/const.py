@@ -1,5 +1,6 @@
 DOMAIN = "touristtaxes"
 DEFAULT_PRICE = 2.40
 DEFAULT_UPDATE_TIME = "23:00"
+DEFAULT_ZONE = "camping"
 SEASON_START_MONTH = 3  # Maart
 SEASON_END_MONTH = 11   # November
