@@ -123,12 +123,16 @@ class TouristTaxSensor(Entity):
 
             zone_entity_id = self._config.get("home_zone", "zone.camping")
             zone_state = self.hass.states.get(zone_entity_id)
-            zone_friendly = zone_state.attributes.get("friendly_name", "Camping").lower() if zone_state else "camping"
+            zone_state = self.hass.states.get(self._config.get("home_zone", "zone.camping"))
+            zone_name = zone_state.attributes.get("friendly_name") if zone_state else None
 
-            persons = [
-                e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == zone_friendly
-            ]
+            persons = []
+            if zone_name:
+                zone_name_lower = zone_name.lower()
+                persons = [
+                    e for e in self.hass.states.async_entity_ids("person")
+                    if (state := self.hass.states.get(e)) and state.state.lower() == zone_name_lower
+                ]
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
