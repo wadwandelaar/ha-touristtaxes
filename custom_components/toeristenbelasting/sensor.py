@@ -48,14 +48,24 @@ class TouristTaxSensor(Entity):
                 _LOGGER.error(f"Zone {zone_entity_id} not found")
                 return
             
-            # Get all persons and their states
+            # Get all persons and their zone information
             all_persons = {}
+            persons_in_zone = []
+            
             for entity_id in self.hass.states.async_entity_ids("person"):
                 person_state = self.hass.states.get(entity_id)
-                all_persons[entity_id] = person_state.state if person_state else "unknown"
-            
-            # Check which persons are actually in the zone
-            persons_in_zone = self._get_persons_in_zone(zone_entity_id)
+                if not person_state:
+                    continue
+                
+                person_zone = person_state.attributes.get('zone', 'unknown')
+                all_persons[entity_id] = {
+                    'state': person_state.state,
+                    'zone': person_zone,
+                    'in_target_zone': person_zone == zone_entity_id
+                }
+                
+                if person_zone == zone_entity_id:
+                    persons_in_zone.append(entity_id)
             
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = 0
@@ -66,10 +76,9 @@ class TouristTaxSensor(Entity):
                     guests = 0
             
             _LOGGER.info(f"🔍 Debug Zone Info:")
-            _LOGGER.info(f"Zone: {zone_entity_id}")
-            _LOGGER.info(f"Zone State: {zone_state}")
+            _LOGGER.info(f"Target Zone: {zone_entity_id}")
             _LOGGER.info(f"All persons: {all_persons}")
-            _LOGGER.info(f"Persons in {zone_entity_id}: {persons_in_zone}")
+            _LOGGER.info(f"Persons in target zone: {persons_in_zone}")
             _LOGGER.info(f"Number of persons in zone: {len(persons_in_zone)}")
             _LOGGER.info(f"Guests: {guests}")
             _LOGGER.info(f"Should update: {len(persons_in_zone) > 0 or guests > 0}")
@@ -79,49 +88,19 @@ class TouristTaxSensor(Entity):
         self.hass.services.async_register(DOMAIN, "debug_zone", handle_debug_zone)
 
     def _get_persons_in_zone(self, zone_entity_id):
-        """Get persons that are actually in the specified zone."""
+        """Get persons that are in the specified zone using zone attribute."""
         persons_in_zone = []
-        zone_state = self.hass.states.get(zone_entity_id)
         
-        if not zone_state:
-            return persons_in_zone
-        
-        # Get zone coordinates
-        zone_latitude = zone_state.attributes.get("latitude")
-        zone_longitude = zone_state.attributes.get("longitude")
-        zone_radius = zone_state.attributes.get("radius", 0)
-        
-        if zone_latitude is None or zone_longitude is None:
-            _LOGGER.warning(f"Zone {zone_entity_id} has no coordinates, using fallback method")
-            # Fallback: check if person state matches zone entity ID
-            return [
-                entity_id for entity_id in self.hass.states.async_entity_ids("person")
-                if (person_state := self.hass.states.get(entity_id)) 
-                and person_state.state == zone_entity_id
-            ]
-        
-        # Check each person's location against zone coordinates
         for entity_id in self.hass.states.async_entity_ids("person"):
             person_state = self.hass.states.get(entity_id)
             if not person_state:
                 continue
                 
-            # Check if person is in zone by coordinates
-            person_latitude = person_state.attributes.get("latitude")
-            person_longitude = person_state.attributes.get("longitude")
-            
-            if person_latitude is not None and person_longitude is not None:
-                # Calculate distance between person and zone center
-                from math import sqrt
-                distance = sqrt((person_latitude - zone_latitude)**2 + 
-                               (person_longitude - zone_longitude)**2)
-                
-                # Convert to meters (approximate)
-                distance_meters = distance * 111000
-                
-                if distance_meters <= zone_radius:
-                    persons_in_zone.append(entity_id)
-                    _LOGGER.debug(f"Person {entity_id} is {distance_meters:.0f}m from zone center (radius: {zone_radius}m)")
+            # Check the 'zone' attribute which contains the zone entity ID
+            person_zone = person_state.attributes.get('zone')
+            if person_zone == zone_entity_id:
+                persons_in_zone.append(entity_id)
+                _LOGGER.debug(f"Person {entity_id} is in zone {zone_entity_id}")
         
         return persons_in_zone
 
@@ -205,7 +184,7 @@ class TouristTaxSensor(Entity):
 
             zone_entity_id = self._config.get("home_zone", "zone.camping")
             
-            # Check if anyone is actually in the zone using coordinate-based detection
+            # Check if anyone is actually in the zone using zone attribute
             persons_in_zone = self._get_persons_in_zone(zone_entity_id)
 
             # Get guests count
