@@ -100,10 +100,13 @@ class TouristTaxSensor(Entity):
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
-            _LOGGER.debug(f"Persons in zone '{zone_name}': {[e for e in persons_in_zone]}, Guests: {guests}")
+            _LOGGER.debug(f"[TTAX] zone_name: {zone_name}")
+            _LOGGER.debug(f"[TTAX] persons_in_zone: {[self.hass.states.get(e).name for e in persons_in_zone]}")
+            _LOGGER.debug(f"[TTAX] guests: {guests}")
 
-            if not persons_in_zone and guests == 0:
-                _LOGGER.info("No persons in camping zone and no guests; skipping registration.")
+            # ✅ STRIKTE VOORWAARDE — NIET REGISTEREN ALS ALLES 0 IS
+            if len(persons_in_zone) == 0 and guests == 0:
+                _LOGGER.info("[TTAX] Skipping registration: no persons in zone and no guests.")
                 return
 
             day_key = now.strftime("%Y-%m-%d")
