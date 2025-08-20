@@ -91,7 +91,9 @@ class TouristTaxSensor(Entity):
                 return
 
             zone_name = self._config.get("zone", "camping")
-
+            day_key = now.strftime("%Y-%m-%d")
+            
+            # EERST controleren of we überhaupt moeten registreren
             persons_in_zone = [
                 e for e in self.hass.states.async_entity_ids("person")
                 if self.hass.states.get(e).state.lower() == zone_name
@@ -100,26 +102,22 @@ class TouristTaxSensor(Entity):
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
-            _LOGGER.debug(f"[TTAX] zone_name: {zone_name}")
-            _LOGGER.debug(f"[TTAX] persons_in_zone: {[self.hass.states.get(e).name for e in persons_in_zone]}")
-            _LOGGER.debug(f"[TTAX] guests: {guests}")
+            _LOGGER.debug(f"[TTAX] Persons in {zone_name}: {len(persons_in_zone)}, Guests: {guests}")
 
-            day_key = now.strftime("%Y-%m-%d")
-            
-            # ✅ NIET ALLEEN NIEUWE REGISTRATIE STOPPEN, MAAR OOK BESTAANDE DAGEN MET 0 VERWIJDEREN
+            # ✅ BESLISSLUWE: Alleen doorgaan als er iemand is
             if len(persons_in_zone) == 0 and guests == 0:
+                # Verwijder bestaande dag als die er is
                 if day_key in self._days:
-                    # Verwijder bestaande dag met 0 personen
                     del self._days[day_key]
                     self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-                    self.async_write_ha_state()
                     await self.async_save_data()
                     _LOGGER.info(f"Removed empty day: {day_key}")
+                    self.async_write_ha_state()
                 else:
-                    _LOGGER.info("[TTAX] Skipping registration: no persons in zone and no guests.")
-                return  # Stop volledig
+                    _LOGGER.info("[TTAX] No registration needed: no persons and no guests")
+                return  # Stop hier
 
-            # ✅ WEL registreren (er zijn personen of gasten)
+            # ✅ WEL registreren - er zijn personen of gasten
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons_in_zone),
@@ -136,32 +134,35 @@ class TouristTaxSensor(Entity):
 
             _LOGGER.info(
                 f"Updated {day_key}: Residents: {len(persons_in_zone)}, Guests: {guests}, "
-                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+                f"Amount: €{day_data['amount']}"
             )
+            
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}")
+            import traceback
+            _LOGGER.error(f"Traceback: {traceback.format_exc()}")
 
-    async def async_save_data(self, event=None):
-        def _write_data():
-            temp_file = f"{self._data_file}.tmp"
+        async def async_save_data(self, event=None):
+            def _write_data():
+                temp_file = f"{self._data_file}.tmp"
+                try:
+                    with open(temp_file, "w", encoding="utf-8") as f:
+                        json.dump({
+                            "days": self._days,
+                            "total": self._state,
+                            "last_updated": datetime.now().isoformat()
+                        }, f, indent=2, ensure_ascii=False)
+                    os.replace(temp_file, self._data_file)
+                except Exception:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                    raise
+
             try:
-                with open(temp_file, "w", encoding="utf-8") as f:
-                    json.dump({
-                        "days": self._days,
-                        "total": self._state,
-                        "last_updated": datetime.now().isoformat()
-                    }, f, indent=2, ensure_ascii=False)
-                os.replace(temp_file, self._data_file)
-            except Exception:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                raise
-
-        try:
-            await self.hass.async_add_executor_job(_write_data)
-            _LOGGER.debug(f"Data saved to {self._data_file}")
-        except Exception as e:
-            _LOGGER.error(f"Failed to save data: {str(e)}")
+                await self.hass.async_add_executor_job(_write_data)
+                _LOGGER.debug(f"Data saved to {self._data_file}")
+            except Exception as e:
+                _LOGGER.error(f"Failed to save data: {str(e)}")
 
     @property
     def name(self):
