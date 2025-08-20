@@ -104,12 +104,22 @@ class TouristTaxSensor(Entity):
             _LOGGER.debug(f"[TTAX] persons_in_zone: {[self.hass.states.get(e).name for e in persons_in_zone]}")
             _LOGGER.debug(f"[TTAX] guests: {guests}")
 
-            # ✅ STRIKTE VOORWAARDE — NIET REGISTEREN ALS ALLES 0 IS
-            if len(persons_in_zone) == 0 and guests == 0:
-                _LOGGER.info("[TTAX] Skipping registration: no persons in zone and no guests.")
-                return
-
             day_key = now.strftime("%Y-%m-%d")
+            
+            # ✅ NIET ALLEEN NIEUWE REGISTRATIE STOPPEN, MAAR OOK BESTAANDE DAGEN MET 0 VERWIJDEREN
+            if len(persons_in_zone) == 0 and guests == 0:
+                if day_key in self._days:
+                    # Verwijder bestaande dag met 0 personen
+                    del self._days[day_key]
+                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+                    self.async_write_ha_state()
+                    await self.async_save_data()
+                    _LOGGER.info(f"Removed empty day: {day_key}")
+                else:
+                    _LOGGER.info("[TTAX] Skipping registration: no persons in zone and no guests.")
+                return  # Stop volledig
+
+            # ✅ WEL registreren (er zijn personen of gasten)
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons_in_zone),
