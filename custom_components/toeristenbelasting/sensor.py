@@ -107,7 +107,6 @@ class TouristTaxSensor(Entity):
                 return
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
-
             if zone != "camping":
                 _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
                 return
@@ -118,7 +117,17 @@ class TouristTaxSensor(Entity):
             ]
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+            guests_raw = guests_state.state if guests_state else None
+            _LOGGER.debug(f"Guest sensor state: {guests_raw} (type: {type(guests_raw)})")
+
+            if not guests_raw or guests_raw in ("unknown", "unavailable", "0", "0.0"):
+                guests = 0
+            else:
+                try:
+                    guests = int(float(guests_raw))
+                except ValueError:
+                    _LOGGER.warning(f"Unexpected guest value: {guests_raw}")
+                    guests = 0
 
             day_key = now.strftime("%Y-%m-%d")
             total_present = len(persons) + guests
@@ -126,11 +135,11 @@ class TouristTaxSensor(Entity):
             if total_present == 0:
                 if day_key in self._days:
                     del self._days[day_key]
-                    _LOGGER.info(f"Removed empty day: {day_key}")
                     self._state = round(sum(d["amount"] for d in self._days.values()), 2)
                     await self.async_write_ha_state()
+                    _LOGGER.info(f"Removed empty day: {day_key}")
                 else:
-                    _LOGGER.info("Skipping registration: no persons and no guests")
+                    _LOGGER.info("Skipping registration: no persons and no guests (hard check)")
                 return
 
             day_data = {
@@ -159,7 +168,6 @@ class TouristTaxSensor(Entity):
         if self._last_save and (now - self._last_save).total_seconds() < 30:
             _LOGGER.debug("Skipping save - too frequent")
             return
-
         self._last_save = now
 
         def _write_data():
@@ -184,22 +192,14 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Failed to save data: {str(e)}")
 
     async def async_write_ha_state(self):
-        """Alleen state schrijven en saven als er daadwerkelijk geldige data is."""
-        cleaned_days = {
-            k: v for k, v in self._days.items()
-            if (v.get("persons_in_zone", 0) + v.get("guests", 0)) > 0
-        }
-
-        if len(cleaned_days) == 0:
-            _LOGGER.debug("All days empty, skipping state update and save")
-            return
-
-        self._days = cleaned_days
-        self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-
-        await super().async_write_ha_state()
-        await self.async_save_data()
-        _LOGGER.debug(f"State updated: {len(self._days)} valid days, €{self._state}")
+        total_people = sum(day.get("persons_in_zone", 0) + day.get("guests", 0) 
+                          for day in self._days.values())
+        if total_people > 0 or len(self._days) > 0:
+            await super().async_write_ha_state()
+            await self.async_save_data()
+            _LOGGER.debug(f"State updated: {len(self._days)} days, €{self._state}")
+        else:
+            _LOGGER.debug("No people and no existing data, skipping state update and save")
 
     @property
     def name(self):
