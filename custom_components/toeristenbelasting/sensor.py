@@ -114,21 +114,28 @@ class TouristTaxSensor(Entity):
             self.hass.loop.call_later(30, lambda: self.hass.async_create_task(self.async_schedule_update()))
 
     async def _perform_daily_update(self, now=None):
-        _LOGGER.warning("🚨 _perform_daily_update() triggered")
         try:
             now = now or datetime.now()
+
             if not (3 <= now.month <= 11):
                 _LOGGER.debug("📆 Skipping update outside tourist season")
                 return
 
-            zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
+            zone_entity_id = self._config.get("home_zone", "zone.camping")
+            zone_state = self.hass.states.get(zone_entity_id)
+            zone_friendly = zone_state.attributes.get("friendly_name", "Camping").lower() if zone_state else "camping"
+
             persons = [
                 e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == zone
+                if self.hass.states.get(e).state.lower() == zone_friendly
             ]
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+
+            if len(persons) == 0 and guests == 0:
+                _LOGGER.info("🛑 Geen personen of gasten aanwezig — update wordt overgeslagen")
+                return
 
             day_key = now.strftime("%Y-%m-%d")
             day_data = {
@@ -236,8 +243,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     async def handle_time_change(event):
         entity = event.data.get("entity_id")
-        _LOGGER.debug(f"🔄 State change detected: {event.data}")
-
         if isinstance(entity, str) and entity == "input_datetime.tourist_tax_update_time":
             _LOGGER.warning("🕒 Time change detected, rescheduling daily update")
             await sensor.async_schedule_update()
