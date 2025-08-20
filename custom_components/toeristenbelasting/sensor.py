@@ -24,6 +24,8 @@ class TouristTaxSensor(Entity):
 
     async def async_added_to_hass(self):
         await self._load_with_retry()
+        if self._days:  # Alleen state schrijven als er daadwerkelijk data is
+            self.async_write_ha_state()
         await self.async_schedule_update()
 
     async def _load_with_retry(self, retries=3):
@@ -32,34 +34,27 @@ class TouristTaxSensor(Entity):
                 await self.async_load_data()
                 self._load_attempted = True
                 _LOGGER.info(f"Data loaded successfully (attempt {attempt + 1})")
-                self.async_write_ha_state()
                 return
             except Exception as e:
                 _LOGGER.warning(f"Load attempt {attempt + 1} failed: {str(e)}")
                 if attempt == retries - 1:
-                    _LOGGER.error("All data load attempts failed, initializing empty dataset")
+                    _LOGGER.error("All data load attempts failed. Will not initialize empty dataset.")
                     self._days = {}
                     self._state = 0.0
-                    self.async_write_ha_state()
 
     async def async_load_data(self):
         def _read_and_validate():
             if not os.path.exists(self._data_file):
-                return {"days": {}, "total": 0.0}
+                raise FileNotFoundError("Data file not found")
             with open(self._data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError("Invalid data format: not a dictionary")
-            if "days" not in data or "total" not in data:
-                raise ValueError("Missing required fields in JSON")
+            if not isinstance(data, dict) or "days" not in data or "total" not in data:
+                raise ValueError("Invalid or incomplete data format")
             return data
 
         data = await self.hass.async_add_executor_job(_read_and_validate)
         self._days = data.get("days", {})
-        self._state = round(sum(
-            day.get("amount", 0) 
-            for day in self._days.values()
-        ), 2)
+        self._state = round(sum(day.get("amount", 0) for day in self._days.values()), 2)
         _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
 
     async def async_schedule_update(self, *args):
@@ -91,7 +86,6 @@ class TouristTaxSensor(Entity):
     async def _perform_daily_update(self, now=None):
         try:
             now = now or datetime.now()
-
             if not (3 <= now.month <= 11):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
@@ -106,20 +100,19 @@ class TouristTaxSensor(Entity):
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
+            _LOGGER.debug(f"Persons in zone '{zone_name}': {[e for e in persons_in_zone]}, Guests: {guests}")
+
             if not persons_in_zone and guests == 0:
                 _LOGGER.info("No persons in camping zone and no guests; skipping registration.")
                 return
-
-            total_persons = len(persons_in_zone) + guests
-            amount = round(total_persons * self._config["price_per_person"], 2)
 
             day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons_in_zone),
                 "guests": guests,
-                "total_persons": total_persons,
-                "amount": amount
+                "total_persons": len(persons_in_zone) + guests,
+                "amount": round((len(persons_in_zone) + guests) * self._config["price_per_person"], 2)
             }
 
             self._days[day_key] = day_data
@@ -129,10 +122,9 @@ class TouristTaxSensor(Entity):
             await self.async_save_data()
 
             _LOGGER.info(
-                f"Updated {day_key}: Residents in zone: {len(persons_in_zone)}, Guests: {guests}, "
-                f"Total: {total_persons}, Amount: €{amount}"
+                f"Updated {day_key}: Residents: {len(persons_in_zone)}, Guests: {guests}, "
+                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
             )
-
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}")
 
@@ -147,7 +139,7 @@ class TouristTaxSensor(Entity):
                         "last_updated": datetime.now().isoformat()
                     }, f, indent=2, ensure_ascii=False)
                 os.replace(temp_file, self._data_file)
-            except Exception as e:
+            except Exception:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 raise
