@@ -13,9 +13,6 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 DATA_FILE = "/config/touristtaxes_data.json"
 
-# ONLY these zones will trigger updates
-ALLOWED_ZONES = ["zone.camping"]  # Voeg andere zones toe indien nodig
-
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
         self.hass = hass
@@ -48,8 +45,6 @@ class TouristTaxSensor(Entity):
             
             _LOGGER.info(f"🔍 Debug Zone Info:")
             _LOGGER.info(f"Target Zone: {zone_entity_id}")
-            _LOGGER.info(f"Allowed Zones: {ALLOWED_ZONES}")
-            _LOGGER.info(f"Is target zone allowed: {zone_entity_id in ALLOWED_ZONES}")
             
             # Check all persons
             for entity_id in self.hass.states.async_entity_ids("person"):
@@ -182,11 +177,12 @@ class TouristTaxSensor(Entity):
 
             zone_entity_id = self._config.get("home_zone", "zone.camping")
             
-            # STRICT CHECK: Only update if conditions are met
+            # EERST: Check of we überhaupt moeten updaten!
             if not self._should_update(zone_entity_id):
                 _LOGGER.info(f"🛑 Update conditions not met for {zone_entity_id}")
                 return
 
+            # PAS DAN: de rest van de update logica uitvoeren
             # Get guests count
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = 0
@@ -197,27 +193,27 @@ class TouristTaxSensor(Entity):
                     guests = 0
                     _LOGGER.warning("Ongeldige waarde voor gasten")
 
-            # Count persons in allowed zones
-            persons_in_allowed_zones = 0
+            # Count persons in zone.camping
+            persons_in_camping = 0
             for entity_id in self.hass.states.async_entity_ids("person"):
                 person_state = self.hass.states.get(entity_id)
                 if not person_state:
                     continue
                     
                 person_zone = person_state.attributes.get('zone')
-                if person_zone in ALLOWED_ZONES:
-                    persons_in_allowed_zones += 1
+                if person_zone == "zone.camping":
+                    persons_in_camping += 1
 
             day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
-                "persons_in_zone": persons_in_allowed_zones,
+                "persons_in_zone": persons_in_camping,
                 "guests": guests,
-                "total_persons": persons_in_allowed_zones + guests,
-                "amount": round((persons_in_allowed_zones + guests) * self._config["price_per_person"], 2)
+                "total_persons": persons_in_camping + guests,
+                "amount": round((persons_in_camping + guests) * self._config["price_per_person"], 2)
             }
 
-            # Only add entry if there's actually something to record
+            # Alleen toevoegen als er daadwerkelijk iets te registreren valt
             if day_data["total_persons"] > 0:
                 self._days[day_key] = day_data
                 self._state = round(sum(d["amount"] for d in self._days.values()), 2)
@@ -225,7 +221,7 @@ class TouristTaxSensor(Entity):
                 await self.async_save_data()
 
                 _LOGGER.info(
-                    f"✅ Updated {day_key}: Personen in allowed zones: {persons_in_allowed_zones}, "
+                    f"✅ Updated {day_key}: Personen in zone.camping: {persons_in_camping}, "
                     f"Guests: {guests}, Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
                 )
             else:
@@ -298,7 +294,6 @@ class TouristTaxSensor(Entity):
             "monthly_summary": dict(sorted(monthly.items(), reverse=True)),
             "season_total": round(season_total, 2),
             "data_file": self._data_file,
-            "allowed_zones": ALLOWED_ZONES
         }
 
     def _is_in_season(self, date_obj):
