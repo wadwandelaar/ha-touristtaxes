@@ -21,7 +21,7 @@ class TouristTaxSensor(Entity):
         self._unsub_time = None
         self._data_file = DATA_FILE
         self._load_attempted = False
-        self._last_save = None  # ✅ Cache delay toegevoegd
+        self._last_save = None
 
     async def async_added_to_hass(self):
         await self._load_with_retry()
@@ -33,20 +33,22 @@ class TouristTaxSensor(Entity):
                 await self.async_load_data()
                 self._load_attempted = True
                 _LOGGER.info(f"Data loaded successfully (attempt {attempt + 1})")
-                await self.async_write_ha_state()  # ✅ Gewijzigd naar async
+                # ✅ ALLEEN state schrijven als er data is!
+                if self._days:
+                    await self.async_write_ha_state()
                 return
             except Exception as e:
                 _LOGGER.warning(f"Load attempt {attempt + 1} failed: {str(e)}")
                 if attempt == retries - 1:
-                    _LOGGER.error("All data load attempts failed, initializing empty dataset")
+                    _LOGGER.error("All data load attempts failed, keeping empty dataset")
                     self._days = {}
                     self._state = 0.0
-                    await self.async_write_ha_state()  # ✅ Gewijzigd naar async
+                    # ✅ NIET schrijven bij lege dataset!
 
     async def async_load_data(self):
         def _read_and_validate():
             if not os.path.exists(self._data_file):
-                return {"days": {}, "total": 0.0}
+                raise FileNotFoundError("Data file not found")
             with open(self._data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
@@ -55,13 +57,24 @@ class TouristTaxSensor(Entity):
                 raise ValueError("Missing required fields in JSON")
             return data
 
-        data = await self.hass.async_add_executor_job(_read_and_validate)
-        self._days = data.get("days", {})
-        self._state = round(sum(
-            day.get("amount", 0) 
-            for day in self._days.values()
-        ), 2)
-        _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
+        try:
+            data = await self.hass.async_add_executor_job(_read_and_validate)
+            self._days = data.get("days", {})
+            self._state = round(sum(
+                day.get("amount", 0) 
+                for day in self._days.values()
+            ), 2)
+            _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
+            
+        except FileNotFoundError:
+            # ✅ Geen data gevonden, NIET initialiseren!
+            _LOGGER.info("No data file found, keeping empty dataset")
+            self._days = {}
+            self._state = 0.0
+            
+        except Exception as e:
+            _LOGGER.error(f"Failed to load data: {str(e)}")
+            raise
 
     async def async_schedule_update(self, *args):
         if self._unsub_time:
@@ -100,7 +113,6 @@ class TouristTaxSensor(Entity):
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
             
-            # Skip update if not in camping zone
             if zone != "camping":
                 _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
                 return
@@ -126,7 +138,7 @@ class TouristTaxSensor(Entity):
                     await self.async_write_ha_state()
                 else:
                     _LOGGER.info("Skipping registration: no persons and no guests")
-                return  # ← STOP HIER!
+                return
 
             # ✅ WEL registreren - er zijn personen of gasten
             day_data = {
@@ -145,7 +157,7 @@ class TouristTaxSensor(Entity):
 
             _LOGGER.info(
                 f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
-                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+                f"Amount: €{day_data['amount']}"
             )
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}")
@@ -192,6 +204,7 @@ class TouristTaxSensor(Entity):
         if total_people > 0 or len(self._days) > 0:
             await super().async_write_ha_state()
             await self.async_save_data()
+            _LOGGER.debug(f"State updated: {len(self._days)} days, €{self._state}")
         else:
             _LOGGER.debug("No people and no existing data, skipping state update and save")
 
