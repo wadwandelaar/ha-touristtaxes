@@ -33,7 +33,6 @@ class TouristTaxSensor(Entity):
                 await self.async_load_data()
                 self._load_attempted = True
                 _LOGGER.info(f"Data loaded successfully (attempt {attempt + 1})")
-                # ✅ ALLEEN state schrijven als er data is!
                 if self._days:
                     await self.async_write_ha_state()
                 return
@@ -43,7 +42,6 @@ class TouristTaxSensor(Entity):
                     _LOGGER.error("All data load attempts failed, keeping empty dataset")
                     self._days = {}
                     self._state = 0.0
-                    # ✅ NIET schrijven bij lege dataset!
 
     async def async_load_data(self):
         def _read_and_validate():
@@ -65,13 +63,10 @@ class TouristTaxSensor(Entity):
                 for day in self._days.values()
             ), 2)
             _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
-            
         except FileNotFoundError:
-            # ✅ Geen data gevonden, NIET initialiseren!
             _LOGGER.info("No data file found, keeping empty dataset")
             self._days = {}
             self._state = 0.0
-            
         except Exception as e:
             _LOGGER.error(f"Failed to load data: {str(e)}")
             raise
@@ -106,13 +101,13 @@ class TouristTaxSensor(Entity):
         try:
             now = now or datetime.now()
             _LOGGER.debug("=== DAILY UPDATE STARTED ===")
-            
+
             if not (3 <= now.month <= 11):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
-            
+
             if zone != "camping":
                 _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
                 return
@@ -126,22 +121,18 @@ class TouristTaxSensor(Entity):
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
             day_key = now.strftime("%Y-%m-%d")
-
             total_present = len(persons) + guests
 
-            # ✅ Als er niemand is: dag verwijderen als hij er stond, anders niets doen
             if total_present == 0:
                 if day_key in self._days:
                     del self._days[day_key]
-                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-                    await self.async_save_data()
                     _LOGGER.info(f"Removed empty day: {day_key}")
+                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
                     await self.async_write_ha_state()
                 else:
                     _LOGGER.info("Skipping registration: no persons and no guests")
                 return
 
-            # ✅ Alleen hier komen we als er wél personen of gasten zijn
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
@@ -154,8 +145,6 @@ class TouristTaxSensor(Entity):
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
             await self.async_write_ha_state()
-            await self.async_save_data()
-
             _LOGGER.info(
                 f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
                 f"Amount: €{day_data['amount']}"
@@ -165,14 +154,12 @@ class TouristTaxSensor(Entity):
             import traceback
             _LOGGER.error(f"Traceback: {traceback.format_exc()}")
 
-
     async def async_save_data(self, event=None):
-        # ✅ Voorkom te frequente saves (max 1x per 30 seconden)
         now = datetime.now()
         if self._last_save and (now - self._last_save).total_seconds() < 30:
             _LOGGER.debug("Skipping save - too frequent")
             return
-            
+
         self._last_save = now
 
         def _write_data():
@@ -197,18 +184,22 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Failed to save data: {str(e)}")
 
     async def async_write_ha_state(self):
-        """Alleen state schrijven en saven als er daadwerkelijk iets veranderd is."""
-        # Bereken of er wel écht iemand is in alle dagen
-        total_people = sum(day.get("persons_in_zone", 0) + day.get("guests", 0) 
-                          for day in self._days.values())
-        
-        # ✅ ALLEEN OPSLAAN ALS ER IEMAND IS OF ALS ER DATA VERWIJDERD MOET WORDEN
-        if total_people > 0 or len(self._days) > 0:
-            await super().async_write_ha_state()
-            await self.async_save_data()
-            _LOGGER.debug(f"State updated: {len(self._days)} days, €{self._state}")
-        else:
-            _LOGGER.debug("No people and no existing data, skipping state update and save")
+        """Alleen state schrijven en saven als er daadwerkelijk geldige data is."""
+        cleaned_days = {
+            k: v for k, v in self._days.items()
+            if (v.get("persons_in_zone", 0) + v.get("guests", 0)) > 0
+        }
+
+        if len(cleaned_days) == 0:
+            _LOGGER.debug("All days empty, skipping state update and save")
+            return
+
+        self._days = cleaned_days
+        self._state = round(sum(d["amount"] for d in self._days.values()), 2)
+
+        await super().async_write_ha_state()
+        await self.async_save_data()
+        _LOGGER.debug(f"State updated: {len(self._days)} valid days, €{self._state}")
 
     @property
     def name(self):
