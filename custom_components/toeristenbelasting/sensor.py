@@ -91,32 +91,35 @@ class TouristTaxSensor(Entity):
     async def _perform_daily_update(self, now=None):
         try:
             now = now or datetime.now()
+
             if not (3 <= now.month <= 11):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
 
-            zone = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
-            
-            # Skip update if not in camping zone
-            if zone != "camping":
-                _LOGGER.debug(f"Skipping update, not in other zone (current zone: {zone})")
-                return
+            zone_name = self._config.get("home_zone", "zone.camping").split(".")[-1].lower()
 
-            persons = [
+            persons_in_zone = [
                 e for e in self.hass.states.async_entity_ids("person")
-                if self.hass.states.get(e).state.lower() == zone
+                if self.hass.states.get(e).state.lower() == zone_name
             ]
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
+            if not persons_in_zone and guests == 0:
+                _LOGGER.info("No persons in camping zone and no guests; skipping registration.")
+                return
+
+            total_persons = len(persons_in_zone) + guests
+            amount = round(total_persons * self._config["price_per_person"], 2)
+
             day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
-                "persons_in_zone": len(persons),
+                "persons_in_zone": len(persons_in_zone),
                 "guests": guests,
-                "total_persons": len(persons) + guests,
-                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
+                "total_persons": total_persons,
+                "amount": amount
             }
 
             self._days[day_key] = day_data
@@ -126,9 +129,10 @@ class TouristTaxSensor(Entity):
             await self.async_save_data()
 
             _LOGGER.info(
-                f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
-                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+                f"Updated {day_key}: Residents in zone: {len(persons_in_zone)}, Guests: {guests}, "
+                f"Total: {total_persons}, Amount: €{amount}"
             )
+
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}")
 

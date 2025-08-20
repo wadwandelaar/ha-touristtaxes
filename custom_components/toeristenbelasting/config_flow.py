@@ -1,6 +1,6 @@
 from homeassistant import config_entries
 import voluptuous as vol
-from .const import DOMAIN, DEFAULT_PRICE, DEFAULT_UPDATE_TIME
+from .const import DOMAIN, DEFAULT_PRICE
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
