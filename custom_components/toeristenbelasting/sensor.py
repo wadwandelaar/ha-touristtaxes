@@ -40,8 +40,35 @@ class TouristTaxSensor(Entity):
             await self.reset_data()
             _LOGGER.info("Data reset triggered via service")
 
+        async def handle_debug_zone(call):
+            zone_entity_id = self._config.get("home_zone", "zone.camping")
+            zone_state = self.hass.states.get(zone_entity_id)
+            
+            persons_in_zone = [
+                entity_id for entity_id in self.hass.states.async_entity_ids("person")
+                if (person_state := self.hass.states.get(entity_id)) 
+                and person_state.state == zone_entity_id
+            ]
+            
+            guests_state = self.hass.states.get("input_number.tourist_guests")
+            guests = 0
+            if guests_state and guests_state.state not in ("unknown", "unavailable"):
+                try:
+                    guests = int(float(guests_state.state))
+                except (ValueError, TypeError):
+                    guests = 0
+            
+            _LOGGER.info(f"🔍 Debug Zone Info:")
+            _LOGGER.info(f"Zone: {zone_entity_id}")
+            _LOGGER.info(f"Zone State: {zone_state}")
+            _LOGGER.info(f"Persons in zone: {persons_in_zone}")
+            _LOGGER.info(f"Number of persons: {len(persons_in_zone)}")
+            _LOGGER.info(f"Guests: {guests}")
+            _LOGGER.info(f"Should update: {len(persons_in_zone) > 0 or guests > 0}")
+
         self.hass.services.async_register(DOMAIN, "force_update", handle_force_update)
         self.hass.services.async_register(DOMAIN, "reset_data", handle_reset_data)
+        self.hass.services.async_register(DOMAIN, "debug_zone", handle_debug_zone)
 
     async def reset_data(self):
         self._days = {}
@@ -121,33 +148,43 @@ class TouristTaxSensor(Entity):
                 _LOGGER.debug("📆 Skipping update outside tourist season")
                 return
 
+            # Controleer of we in de juiste zone zijn
             zone_entity_id = self._config.get("home_zone", "zone.camping")
             zone_state = self.hass.states.get(zone_entity_id)
-            zone_state = self.hass.states.get(self._config.get("home_zone", "zone.camping"))
-            zone_name = zone_state.attributes.get("friendly_name") if zone_state else None
+            
+            if not zone_state:
+                _LOGGER.warning(f"Zone {zone_entity_id} niet gevonden")
+                return
+                
+            # Haal personen op die in de camping zone zijn
+            persons_in_zone = [
+                entity_id for entity_id in self.hass.states.async_entity_ids("person")
+                if (person_state := self.hass.states.get(entity_id)) 
+                and person_state.state == zone_entity_id
+            ]
 
-            persons = []
-            if zone_name:
-                zone_name_lower = zone_name.lower()
-                persons = [
-                    e for e in self.hass.states.async_entity_ids("person")
-                    if (state := self.hass.states.get(e)) and state.state.lower() == zone_name_lower
-                ]
-
+            # Haal gasten aantal op
             guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
+            guests = 0
+            if guests_state and guests_state.state not in ("unknown", "unavailable"):
+                try:
+                    guests = int(float(guests_state.state))
+                except (ValueError, TypeError):
+                    guests = 0
+                    _LOGGER.warning("Ongeldige waarde voor gasten")
 
-            if len(persons) == 0 and guests == 0:
-                _LOGGER.info("🛑 Geen personen of gasten aanwezig — update wordt overgeslagen")
+            # CRITIEKE CONTROLE: Alleen updaten als er iemand in de zone is OF gasten > 0
+            if len(persons_in_zone) == 0 and guests == 0:
+                _LOGGER.info("🛑 Geen personen in zone en geen gasten — update wordt overgeslagen")
                 return
 
             day_key = now.strftime("%Y-%m-%d")
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
-                "persons_in_zone": len(persons),
+                "persons_in_zone": len(persons_in_zone),
                 "guests": guests,
-                "total_persons": len(persons) + guests,
-                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
+                "total_persons": len(persons_in_zone) + guests,
+                "amount": round((len(persons_in_zone) + guests) * self._config["price_per_person"], 2)
             }
 
             self._days[day_key] = day_data
@@ -157,8 +194,8 @@ class TouristTaxSensor(Entity):
             await self.async_save_data()
 
             _LOGGER.info(
-                f"✅ Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
-                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
+                f"✅ Updated {day_key}: Personen in {zone_entity_id}: {len(persons_in_zone)}, "
+                f"Guests: {guests}, Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
             )
         except Exception as e:
             _LOGGER.error(f"❌ Daily update failed: {str(e)}")
