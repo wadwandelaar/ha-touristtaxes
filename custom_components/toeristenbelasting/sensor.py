@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 
 from homeassistant.helpers.entity import Entity
@@ -21,7 +21,6 @@ class TouristTaxSensor(Entity):
         self._unsub_time = None
         self._data_file = DATA_FILE
         self._load_attempted = False
-        self._last_save = None
 
     async def async_added_to_hass(self):
         await self._load_with_retry()
@@ -33,20 +32,20 @@ class TouristTaxSensor(Entity):
                 await self.async_load_data()
                 self._load_attempted = True
                 _LOGGER.info(f"Data loaded successfully (attempt {attempt + 1})")
-                if self._days:
-                    await self.async_write_ha_state()
+                self.async_write_ha_state()
                 return
             except Exception as e:
                 _LOGGER.warning(f"Load attempt {attempt + 1} failed: {str(e)}")
                 if attempt == retries - 1:
-                    _LOGGER.error("All data load attempts failed, keeping empty dataset")
+                    _LOGGER.error("All data load attempts failed, initializing empty dataset")
                     self._days = {}
                     self._state = 0.0
+                    self.async_write_ha_state()
 
     async def async_load_data(self):
         def _read_and_validate():
             if not os.path.exists(self._data_file):
-                raise FileNotFoundError("Data file not found")
+                return {"days": {}, "total": 0.0}
             with open(self._data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
@@ -55,21 +54,13 @@ class TouristTaxSensor(Entity):
                 raise ValueError("Missing required fields in JSON")
             return data
 
-        try:
-            data = await self.hass.async_add_executor_job(_read_and_validate)
-            self._days = data.get("days", {})
-            self._state = round(sum(
-                day.get("amount", 0) 
-                for day in self._days.values()
-            ), 2)
-            _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
-        except FileNotFoundError:
-            _LOGGER.info("No data file found, keeping empty dataset")
-            self._days = {}
-            self._state = 0.0
-        except Exception as e:
-            _LOGGER.error(f"Failed to load data: {str(e)}")
-            raise
+        data = await self.hass.async_add_executor_job(_read_and_validate)
+        self._days = data.get("days", {})
+        self._state = round(sum(
+            day.get("amount", 0) 
+            for day in self._days.values()
+        ), 2)
+        _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
 
     async def async_schedule_update(self, *args):
         if self._unsub_time:
@@ -100,13 +91,13 @@ class TouristTaxSensor(Entity):
     async def _perform_daily_update(self, now=None):
         try:
             now = now or datetime.now()
-            _LOGGER.debug("=== DAILY UPDATE STARTED ===")
-
             if not (3 <= now.month <= 11):
                 _LOGGER.debug("Skipping update outside tourist season")
                 return
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
+            
+            # Skip update if not in camping zone
             if zone != "camping":
                 _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
                 return
@@ -117,59 +108,31 @@ class TouristTaxSensor(Entity):
             ]
 
             guests_state = self.hass.states.get("input_number.tourist_guests")
-            guests_raw = guests_state.state if guests_state else None
-            _LOGGER.debug(f"Guest sensor state: {guests_raw} (type: {type(guests_raw)})")
-
-            if not guests_raw or guests_raw in ("unknown", "unavailable", "0", "0.0"):
-                guests = 0
-            else:
-                try:
-                    guests = int(float(guests_raw))
-                except ValueError:
-                    _LOGGER.warning(f"Unexpected guest value: {guests_raw}")
-                    guests = 0
+            guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
             day_key = now.strftime("%Y-%m-%d")
-            total_present = len(persons) + guests
-
-            if total_present == 0:
-                if day_key in self._days:
-                    del self._days[day_key]
-                    self._state = round(sum(d["amount"] for d in self._days.values()), 2)
-                    await self.async_write_ha_state()
-                    _LOGGER.info(f"Removed empty day: {day_key}")
-                else:
-                    _LOGGER.info("Skipping registration: no persons and no guests (hard check)")
-                return
-
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
                 "guests": guests,
-                "total_persons": total_present,
-                "amount": round(total_present * self._config["price_per_person"], 2)
+                "total_persons": len(persons) + guests,
+                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
             }
 
             self._days[day_key] = day_data
             self._state = round(sum(d["amount"] for d in self._days.values()), 2)
 
-            await self.async_write_ha_state()
+            self.async_write_ha_state()
+            await self.async_save_data()
+
             _LOGGER.info(
                 f"Updated {day_key}: Residents: {len(persons)}, Guests: {guests}, "
-                f"Amount: €{day_data['amount']}"
+                f"Total: {day_data['total_persons']}, Amount: €{day_data['amount']}"
             )
         except Exception as e:
             _LOGGER.error(f"Daily update failed: {str(e)}")
-            import traceback
-            _LOGGER.error(f"Traceback: {traceback.format_exc()}")
 
     async def async_save_data(self, event=None):
-        now = datetime.now()
-        if self._last_save and (now - self._last_save).total_seconds() < 30:
-            _LOGGER.debug("Skipping save - too frequent")
-            return
-        self._last_save = now
-
         def _write_data():
             temp_file = f"{self._data_file}.tmp"
             try:
@@ -190,16 +153,6 @@ class TouristTaxSensor(Entity):
             _LOGGER.debug(f"Data saved to {self._data_file}")
         except Exception as e:
             _LOGGER.error(f"Failed to save data: {str(e)}")
-
-    async def async_write_ha_state(self):
-        total_people = sum(day.get("persons_in_zone", 0) + day.get("guests", 0) 
-                          for day in self._days.values())
-        if total_people > 0 or len(self._days) > 0:
-            await super().async_write_ha_state()
-            await self.async_save_data()
-            _LOGGER.debug(f"State updated: {len(self._days)} days, €{self._state}")
-        else:
-            _LOGGER.debug("No people and no existing data, skipping state update and save")
 
     @property
     def name(self):
