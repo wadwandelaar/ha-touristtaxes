@@ -126,10 +126,11 @@ class TouristTaxSensor(Entity):
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
             day_key = now.strftime("%Y-%m-%d")
-            
-            # ✅ CRUCIALE CHECK: Alleen registreren als er iemand is
-            if len(persons) == 0 and guests == 0:
-                # Verwijder eventuele bestaande lege dag
+
+            total_present = len(persons) + guests
+
+            # ✅ Als er niemand is: dag verwijderen als hij er stond, anders niets doen
+            if total_present == 0:
                 if day_key in self._days:
                     del self._days[day_key]
                     self._state = round(sum(d["amount"] for d in self._days.values()), 2)
@@ -140,13 +141,13 @@ class TouristTaxSensor(Entity):
                     _LOGGER.info("Skipping registration: no persons and no guests")
                 return
 
-            # ✅ WEL registreren - er zijn personen of gasten
+            # ✅ Alleen hier komen we als er wél personen of gasten zijn
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
                 "guests": guests,
-                "total_persons": len(persons) + guests,
-                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
+                "total_persons": total_present,
+                "amount": round(total_present * self._config["price_per_person"], 2)
             }
 
             self._days[day_key] = day_data
@@ -163,6 +164,7 @@ class TouristTaxSensor(Entity):
             _LOGGER.error(f"Daily update failed: {str(e)}")
             import traceback
             _LOGGER.error(f"Traceback: {traceback.format_exc()}")
+
 
     async def async_save_data(self, event=None):
         # ✅ Voorkom te frequente saves (max 1x per 30 seconden)
