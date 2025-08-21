@@ -12,6 +12,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 DATA_FILE = "/config/touristtaxes_data.json"
 
+
 class TouristTaxSensor(Entity):
     def __init__(self, hass, config_entry):
         self.hass = hass
@@ -57,7 +58,7 @@ class TouristTaxSensor(Entity):
         data = await self.hass.async_add_executor_job(_read_and_validate)
         self._days = data.get("days", {})
         self._state = round(sum(
-            day.get("amount", 0) 
+            day.get("amount", 0)
             for day in self._days.values()
         ), 2)
         _LOGGER.debug(f"Loaded {len(self._days)} days, recalculated total: €{self._state}")
@@ -96,8 +97,7 @@ class TouristTaxSensor(Entity):
                 return
 
             zone = self._config.get("home_zone", "zone.home").split(".")[-1].lower()
-            
-            # Skip update if not in camping zone
+
             if zone != "camping":
                 _LOGGER.debug(f"Skipping update, not in camping zone (current zone: {zone})")
                 return
@@ -113,7 +113,7 @@ class TouristTaxSensor(Entity):
             total_persons = len(persons) + guests
             day_key = now.strftime("%Y-%m-%d")
 
-            # ✅ Nieuw: sla alleen op als er iemand aanwezig is
+            # ✅ Alleen registreren als er personen/gasten aanwezig zijn
             if total_persons == 0:
                 _LOGGER.debug(f"Skipping update for {day_key}, no persons or guests present")
                 return
@@ -150,7 +150,7 @@ class TouristTaxSensor(Entity):
                         "last_updated": datetime.now().isoformat()
                     }, f, indent=2, ensure_ascii=False)
                 os.replace(temp_file, self._data_file)
-            except Exception as e:
+            except Exception:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                 raise
