@@ -110,13 +110,20 @@ class TouristTaxSensor(Entity):
             guests_state = self.hass.states.get("input_number.tourist_guests")
             guests = int(float(guests_state.state)) if guests_state and guests_state.state not in ("unknown", "unavailable") else 0
 
+            total_persons = len(persons) + guests
             day_key = now.strftime("%Y-%m-%d")
+
+            # ✅ Nieuw: sla alleen op als er iemand aanwezig is
+            if total_persons == 0:
+                _LOGGER.debug(f"Skipping update for {day_key}, no persons or guests present")
+                return
+
             day_data = {
                 "date": now.strftime("%A %d %B %Y"),
                 "persons_in_zone": len(persons),
                 "guests": guests,
-                "total_persons": len(persons) + guests,
-                "amount": round((len(persons) + guests) * self._config["price_per_person"], 2)
+                "total_persons": total_persons,
+                "amount": round(total_persons * self._config["price_per_person"], 2)
             }
 
             self._days[day_key] = day_data
